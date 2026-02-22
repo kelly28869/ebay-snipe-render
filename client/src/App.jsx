@@ -169,8 +169,7 @@ export default function App() {
   const runScan = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const filterPart = criteria.keywords.length ? " (" + criteria.keywords.join(" OR ") + ")" : "";
-      const keywords = BASE_SEARCH + filterPart;
+      const keywords = [BASE_SEARCH, ...criteria.keywords].join(" ");
       const res = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -301,7 +300,7 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <input type="number" min="5" max="3600" value={scanInterval} onChange={e => setScanInterval(Math.max(5, Math.min(3600, parseInt(e.target.value) || 5)))} style={{ ...inp, width: 90, textAlign: "center", fontWeight: 600 }} />
             <span style={{ fontSize: 11, color: "#999" }}>{scanInterval < 60 ? `${scanInterval}s` : `${(scanInterval / 60).toFixed(1)}m`}</span>
-            <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>{[15, 30, 60].map(v => <button key={v} onClick={() => setScanInterval(v)} style={{ background: scanInterval === v ? "#f0fdf4" : "#f9fafb", border: `1px solid ${scanInterval === v ? "#86efac" : "#e5e7eb"}`, color: scanInterval === v ? "#166534" : "#aaa", padding: "3px 8px", borderRadius: 4, cursor: "pointer", fontSize: 10, fontFamily: "inherit" }}>{v}s</button>)}</div>
+            <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>{[5, 10, 30].map(v => <button key={v} onClick={() => setScanInterval(v)} style={{ background: scanInterval === v ? "#f0fdf4" : "#f9fafb", border: `1px solid ${scanInterval === v ? "#86efac" : "#e5e7eb"}`, color: scanInterval === v ? "#166534" : "#aaa", padding: "3px 8px", borderRadius: 4, cursor: "pointer", fontSize: 10, fontFamily: "inherit" }}>{v}s</button>)}</div>
           </div>
 
           <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 8 }}>
