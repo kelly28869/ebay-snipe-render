@@ -130,17 +130,35 @@ app.post('/api/search', async (req, res) => {
 
     const data = await response.json();
     const listings = (data.itemSummaries || []).map(item => {
-      const shipCost = item.shippingOptions?.[0]?.shippingCost
-        ? parseFloat(item.shippingOptions[0].shippingCost.value) : 0;
+      const shipOpt = item.shippingOptions?.[0];
+      const shipType = shipOpt?.shippingCostType || '';
+      const shipCostRaw = shipOpt?.shippingCost ? parseFloat(shipOpt.shippingCost.value) : null;
+      
+      // Only trust $0 if it's explicitly FIXED price free shipping
+      const isFreeShipping = shipType === 'FIXED' && shipCostRaw === 0;
+      // CALCULATED shipping with $0 = unknown, not free
+      const isCalculated = shipType === 'CALCULATED' || (shipCostRaw === 0 && shipType !== 'FIXED');
+      
+      let shipCost, shipping, shippingKnown;
+      if (isFreeShipping) {
+        shipCost = 0; shipping = 'Free shipping'; shippingKnown = true;
+      } else if (isCalculated || shipCostRaw === null) {
+        shipCost = null; shipping = 'Shipping TBD'; shippingKnown = false;
+      } else {
+        shipCost = shipCostRaw; shipping = `$${shipCostRaw.toFixed(2)} shipping`; shippingKnown = true;
+      }
+
       const itemPrice = item.price ? parseFloat(item.price.value) : 0;
+      const totalPrice = shippingKnown ? itemPrice + (shipCost || 0) : itemPrice;
       return {
         id: item.itemId,
         title: item.title,
         price: item.price ? `$${item.price.value}` : '',
         itemPrice,
-        shipping: shipCost === 0 ? 'Free shipping' : `$${shipCost.toFixed(2)} shipping`,
-        shipCost,
-        totalPrice: itemPrice + shipCost,
+        shipping,
+        shipCost: shipCost || 0,
+        totalPrice,
+        shippingKnown,
         condition: item.condition || '',
         url: item.itemWebUrl || '',
         image: item.image?.imageUrl || '',

@@ -12,7 +12,7 @@ const SORT_OPTIONS = [
 ];
 
 const PRESET_CATEGORIES = [
-  { label: "Type", keywords: ["DDR4", "CP4", "DDR5", "CP5"] },
+  { label: "Type", keywords: ["DDR4", "PC4", "DDR5", "PC5"] },
   { label: "Size", keywords: ["4GB", "8GB", "16GB", "32GB"] },
   { label: "Brand", keywords: ["Samsung", "Hynix", "Micron", "Kingston", "Crucial", "Mixed Lot"] },
   { label: "Speed", keywords: ["3200", "2666", "2400", "2133"] },
@@ -36,25 +36,56 @@ const DEFAULT_PRICE_RULES = [
   { type: "DDR5", size: "32GB", speed: "All", maxPrice: 210 },
 ];
 
+const EXCLUDED_BRANDS = ["GSKILL", "G.SKILL", "TIMETEC", "CORSAIR", "ELPIDA"];
+
 const DEFAULT_CRITERIA = { keywords: [], minPrice: "", maxPrice: "", conditions: [], sortBy: "newly_listed", buyItNowOnly: true, freeShippingOnly: false };
 
-function detectQuantity(title) {
+function detectQuantityAndSize(title) {
   const t = title.toUpperCase();
-  const patterns = [/\b(\d+)\s*[Xx]\s*\d+\s*GB/i, /\((\d+)\s*(?:PACK|PCS?|STICKS?|MODULES?|DIMMS?)\)/i, /\bLOT\s*(?:OF\s*)?(\d+)/i, /\bKIT\s*(?:OF\s*)?(\d+)/i, /\bSET\s*(?:OF\s*)?(\d+)/i, /\b(\d+)\s*(?:PACK|PCS?|STICKS?|MODULES?|DIMMS?)\b/i, /\b(\d+)\s*[Xx]\b/i];
-  for (const p of patterns) { const m = t.match(p); if (m) { const n = parseInt(m[1]); if (n >= 1 && n <= 100) return n; } }
-  return 1;
+  // Look for explicit NxM GB patterns first — this is the per-stick size
+  const nxm = t.match(/(\d+)\s*[Xx]\s*(\d+)\s*GB/);
+  if (nxm) {
+    const qty = parseInt(nxm[1]);
+    const perStick = parseInt(nxm[2]);
+    if (qty >= 1 && qty <= 100 && perStick > 0) return { qty, perStickGB: perStick };
+  }
+  // Check for lot/kit/pack patterns
+  const lotPatterns = [
+    /\bLOT\s*(?:OF\s*)?(\d+)/i, /\bKIT\s*(?:OF\s*)?(\d+)/i, /\bSET\s*(?:OF\s*)?(\d+)/i,
+    /\((\d+)\s*(?:PACK|PCS?|PIECES?|STICKS?|MODULES?|DIMMS?)\)/i,
+    /\b(\d+)\s*(?:PACK|PCS?|PIECES?|STICKS?|MODULES?|DIMMS?)\b/i,
+  ];
+  for (const p of lotPatterns) {
+    const m = t.match(p);
+    if (m) { const n = parseInt(m[1]); if (n >= 1 && n <= 100) return { qty: n, perStickGB: null }; }
+  }
+  return { qty: 1, perStickGB: null };
 }
 
 function matchPriceRule(listing, rules) {
   const { title, totalPrice } = listing;
-  if (!title || !totalPrice) return null;
+  if (!title || totalPrice === null || totalPrice === undefined) return null;
   const t = title.toUpperCase();
-  const qty = detectQuantity(title);
-  let bestMatch = null, bestSpec = -1;
+  const { qty, perStickGB } = detectQuantityAndSize(title);
+  let bestMatch = null;
+  let bestSpec = -1;
+
   for (const rule of rules) {
     const typeOk = t.includes(rule.type) || (rule.type === "DDR4" && t.includes("PC4")) || (rule.type === "DDR5" && t.includes("PC5"));
     if (!typeOk) continue;
-    if (!t.match(new RegExp(`\\b${rule.size.replace("GB", "")}\\s*GB\\b`, "i"))) continue;
+
+    const ruleSizeNum = parseInt(rule.size.replace("GB", ""));
+
+    // If we detected per-stick size (e.g. 2x16GB → 16), match against that
+    // Otherwise fall back to finding any size mention in the title
+    let sizeMatch = false;
+    if (perStickGB !== null) {
+      sizeMatch = (perStickGB === ruleSizeNum);
+    } else {
+      sizeMatch = !!t.match(new RegExp(`\\b${ruleSizeNum}\\s*GB\\b`, "i"));
+    }
+    if (!sizeMatch) continue;
+
     let speedOk = rule.speed === "All";
     if (!speedOk) speedOk = t.includes(rule.speed);
     if (!speedOk) continue;
@@ -62,7 +93,7 @@ function matchPriceRule(listing, rules) {
     if (spec > bestSpec) {
       bestSpec = spec;
       const adj = rule.maxPrice * qty;
-      bestMatch = { ...rule, qty, totalPrice, adjustedMax: adj, underBudget: totalPrice <= adj, savings: adj - totalPrice, perUnit: qty > 1 ? totalPrice / qty : null };
+      bestMatch = { ...rule, qty, totalPrice, adjustedMax: adj, underBudget: listing.shippingKnown === false ? false : totalPrice <= adj, savings: adj - totalPrice, perUnit: qty > 1 ? totalPrice / qty : null, shipUnknown: listing.shippingKnown === false };
     }
   }
   return bestMatch;
@@ -351,15 +382,18 @@ export default function App() {
                       <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 500, color: "#222", lineHeight: 1.5, marginBottom: 8 }}>
                         {isDeal && <span style={{ background: "#16a34a", color: "#fff", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20, marginRight: 8, textTransform: "uppercase", letterSpacing: 1, fontFamily: "'IBM Plex Mono', monospace" }}>✓ Deal</span>}
                         {isOver && <span style={{ background: "#fbbf24", color: "#78350f", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20, marginRight: 8, textTransform: "uppercase", fontFamily: "'IBM Plex Mono', monospace" }}>Over</span>}
+                        {r?.shipUnknown && <span style={{ background: "#fef3c7", color: "#b45309", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20, marginRight: 8, textTransform: "uppercase", fontFamily: "'IBM Plex Mono', monospace", border: "1px solid #fde68a" }}>⚠ Ship TBD</span>}
                         {newIds.has(li.id) && <span style={{ background: "#eff6ff", color: "#1e40af", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20, marginRight: 8, textTransform: "uppercase", fontFamily: "'IBM Plex Mono', monospace", border: "1px solid #bfdbfe" }}>New</span>}
                         {li.title}
                       </div>
                       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                         <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
                           <span style={{ color: isDeal ? "#16a34a" : isOver ? "#b45309" : "#16a34a", fontSize: 20, fontWeight: 700, fontFamily: "'DM Sans', sans-serif" }}>${li.totalPrice.toFixed(2)}</span>
-                          <span style={{ fontSize: 10, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>(${li.itemPrice.toFixed(2)} + ${li.shipCost.toFixed(2)} ship)</span>
+                          <span style={{ fontSize: 10, color: li.shippingKnown === false ? "#f59e0b" : "#999", fontFamily: "'IBM Plex Mono', monospace" }}>
+                            {li.shippingKnown === false ? `($${li.itemPrice.toFixed(2)} + ship TBD)` : `($${li.itemPrice.toFixed(2)} + $${li.shipCost.toFixed(2)} ship)`}
+                          </span>
                         </div>
-                        {r && <span style={{ fontSize: 10, fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace", color: isDeal ? "#16a34a" : "#dc2626", background: isDeal ? "#dcfce7" : "#fef2f2", padding: "3px 8px", borderRadius: 20 }}>{isDeal ? `$${r.savings.toFixed(0)} under` : `$${Math.abs(r.savings).toFixed(0)} over`}{r.qty > 1 ? ` (${r.qty}× ≤$${r.adjustedMax})` : ` (≤$${r.adjustedMax})`}</span>}
+                        {r && <span style={{ fontSize: 10, fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace", color: r.shipUnknown ? "#b45309" : isDeal ? "#16a34a" : "#dc2626", background: r.shipUnknown ? "#fef3c7" : isDeal ? "#dcfce7" : "#fef2f2", padding: "3px 8px", borderRadius: 20 }}>{r.shipUnknown ? `$${r.savings.toFixed(0)} under + ship?` : isDeal ? `$${r.savings.toFixed(0)} under` : `$${Math.abs(r.savings).toFixed(0)} over`}{r.qty > 1 ? ` (${r.qty}× ≤$${r.adjustedMax})` : ` (≤$${r.adjustedMax})`}</span>}
                         {r?.qty > 1 && <span style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", background: "#f5f3ff", padding: "3px 8px", borderRadius: 20, border: "1px solid #ddd6fe", fontFamily: "'IBM Plex Mono', monospace" }}>{r.qty}× · ${r.perUnit?.toFixed(2)}/ea</span>}
                         {li.condition && <span style={{ fontSize: 10, color: "#777", background: "#f3f4f6", padding: "3px 8px", borderRadius: 20, fontFamily: "'DM Sans', sans-serif" }}>{li.condition}</span>}
                         {li.seller && <span style={{ fontSize: 10, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>@{li.seller}</span>}
