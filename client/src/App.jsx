@@ -190,6 +190,7 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [countdown, setCountdown] = useState(null);
   const [filterMode, setFilterMode] = useState("all");
+  const [apiStats, setApiStats] = useState(null);
   const intervalRef = useRef(null);
   const countdownRef = useRef(null);
 
@@ -220,11 +221,12 @@ export default function App() {
           buyItNowOnly: criteria.buyItNowOnly,
           freeShippingOnly: criteria.freeShippingOnly,
           zipCode: ZIP_CODE,
-          limit: 50,
+          limit: 100,
         }),
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Server error ${res.status}`); }
       const data = await res.json();
+      if (data.apiStats) setApiStats(data.apiStats);
 
       if (data.listings?.length > 0) {
         // Filter by keywords client-side (ANY match)
@@ -241,7 +243,7 @@ export default function App() {
           }
         }
         setListings(matched);
-        setHistory(prev => [{ time: new Date(), count: matched.length, keywords: criteria.keywords.length ? criteria.keywords.join(", ") : "all" }, ...prev.slice(0, 49)]);
+        setHistory(prev => [{ time: new Date(), count: matched.length, keywords: criteria.keywords.length ? criteria.keywords.join(", ") : "all" }, ...prev.slice(0, 99)]);
       } else { setListings([]); }
       setLastScan(new Date()); setScanCount(c => c + 1); setCountdown(scanInterval);
     } catch (err) { setError(err.message); } finally { setLoading(false); }
@@ -353,6 +355,22 @@ export default function App() {
               <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10, fontWeight: 600 }}>Session</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 {[{ l: "Scans", v: scanCount }, { l: "Results", v: listings.length }, { l: "Deals", v: dealCount, c: "#16a34a" }, { l: "Over", v: overCount, c: "#dc2626" }].map(s => <div key={s.l}><div style={{ fontSize: 9, color: "#bbb", textTransform: "uppercase", letterSpacing: 1 }}>{s.l}</div><div style={{ fontSize: 14, fontWeight: 600, color: s.c || "#333", fontFamily: "'DM Sans', sans-serif" }}>{s.v}</div></div>)}
+              </div>
+            </div>
+          )}
+          {apiStats && (
+            <div style={{ marginTop: 12, padding: 14, background: apiStats.remaining < 500 ? "#fef2f2" : apiStats.remaining < 1500 ? "#fefce8" : "#f0fdf4", borderRadius: 10, border: `1px solid ${apiStats.remaining < 500 ? "#fecaca" : apiStats.remaining < 1500 ? "#fde68a" : "#bbf7d0"}` }}>
+              <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8, fontWeight: 600 }}>eBay API Usage</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                <span style={{ fontSize: 20, fontWeight: 700, fontFamily: "'DM Sans', sans-serif", color: apiStats.remaining < 500 ? "#dc2626" : apiStats.remaining < 1500 ? "#b45309" : "#16a34a" }}>{apiStats.callsToday.toLocaleString()}</span>
+                <span style={{ fontSize: 11, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>/ 5,000</span>
+              </div>
+              <div style={{ width: "100%", height: 6, background: "#e5e7eb", borderRadius: 3, overflow: "hidden" }}>
+                <div style={{ width: `${(apiStats.callsToday / 5000) * 100}%`, height: "100%", borderRadius: 3, background: apiStats.remaining < 500 ? "#dc2626" : apiStats.remaining < 1500 ? "#eab308" : "#16a34a", transition: "width 0.3s" }} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+                <span style={{ fontSize: 9, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>{apiStats.remaining.toLocaleString()} left</span>
+                <span style={{ fontSize: 9, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>~{Math.floor(apiStats.remaining * scanInterval / 3600)}h at {scanInterval}s</span>
               </div>
             </div>
           )}
