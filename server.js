@@ -1,16 +1,5 @@
 /**
  * eBaySnipe Server — Render Edition
- * 
- * In production, this serves BOTH the API and the React frontend
- * from a single Render web service (saves money, simpler).
- * 
- * Deploy to Render:
- *   1. Push to GitHub
- *   2. New Web Service → connect repo
- *   3. Root Directory: (leave blank, uses repo root)
- *   4. Build: npm run build
- *   5. Start: npm start
- *   6. Add env vars: EBAY_CLIENT_ID, EBAY_CLIENT_SECRET
  */
 
 import express from 'express';
@@ -19,51 +8,9 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-// API call tracker — local session counter + real eBay Analytics API
-let sessionCalls = 0;
-let cachedEbayStats = null;
-let lastStatsFetch = 0;
-
-function trackCall() {
-  sessionCalls++;
-}
-
-// Fetch real usage from eBay Developer Analytics API (cached 60s)
-async function getRealUsage(token) {
-  const now = Date.now();
-  if (cachedEbayStats && now - lastStatsFetch < 60000) return cachedEbayStats;
-
-  try {
-    const url = EBAY_ENV === 'sandbox'
-      ? 'https://api.sandbox.ebay.com/developer/analytics/v1_beta/rate_limit/?api_name=buy.browse'
-      : 'https://api.ebay.com/developer/analytics/v1_beta/rate_limit/?api_name=buy.browse';
-
-    const res = await fetch(url, {
-      headers: { 'Authorization': `Bearer ${token}` },
-    });
-    if (!res.ok) return cachedEbayStats;
-
-    const data = await res.json();
-    const limits = data.rateLimits?.[0]?.resources?.[0]?.rates?.[0];
-    if (limits) {
-      cachedEbayStats = {
-        callsToday: limits.limit - limits.remaining,
-        limit: limits.limit,
-        remaining: limits.remaining,
-        resetsAt: limits.reset,
-      };
-      lastStatsFetch = now;
-    }
-  } catch (e) {
-    console.log('[Stats] Could not fetch eBay usage:', e.message);
-  }
-  return cachedEbayStats;
-}
 
 const {
   EBAY_CLIENT_ID,
@@ -72,7 +19,6 @@ const {
   PORT = 3001,
 } = process.env;
 
-// eBay API URLs
 const EBAY_AUTH_URL = EBAY_ENV === 'sandbox'
   ? 'https://api.sandbox.ebay.com/identity/v1/oauth2/token'
   : 'https://api.ebay.com/identity/v1/oauth2/token';
@@ -81,55 +27,74 @@ const EBAY_API_URL = EBAY_ENV === 'sandbox'
   ? 'https://api.sandbox.ebay.com'
   : 'https://api.ebay.com';
 
-// Token cache
+// --- Session counter ---
+let sessionCalls = 0;
+
+// --- Real eBay usage (cached 60s) ---
+let cachedEbayStats = null;
+let lastStatsFetch = 0;
+
+async function getRealUsage(token) {
+  if (cachedEbayStats && Date.now() - lastStatsFetch < 60000) return cachedEbayStats;
+  try {
+    const res = await fetch(`${EBAY_API_URL}/developer/analytics/v1_beta/rate_limit/?api_name=buy.browse`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!res.ok) return cachedEbayStats;
+    const data = await res.json();
+    const rates = data.rateLimits?.[0]?.resources?.[0]?.rates?.[0];
+    if (rates) {
+      cachedEbayStats = { callsToday: rates.limit - rates.remaining, limit: rates.limit, remaining: rates.remaining };
+      lastStatsFetch = Date.now();
+    }
+  } catch (e) {
+    console.log('[Stats] eBay usage fetch failed:', e.message);
+  }
+  return cachedEbayStats;
+}
+
+function getApiStats(ebayStats) {
+  if (ebayStats) return ebayStats;
+  return { callsToday: sessionCalls, limit: 5000, remaining: 5000 - sessionCalls };
+}
+
+// --- OAuth ---
 let tokenCache = { token: null, expiresAt: 0 };
 
 async function getAccessToken() {
-  if (tokenCache.token && Date.now() < tokenCache.expiresAt - 60000) {
-    return tokenCache.token;
-  }
-
+  if (tokenCache.token && Date.now() < tokenCache.expiresAt - 60000) return tokenCache.token;
   const credentials = Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString('base64');
   const response = await fetch(EBAY_AUTH_URL, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Authorization': `Basic ${credentials}`,
-    },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': `Basic ${credentials}` },
     body: 'grant_type=client_credentials&scope=https://api.ebay.com/oauth/api_scope',
   });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`eBay OAuth failed: ${response.status} - ${err}`);
-  }
-
+  if (!response.ok) { const err = await response.text(); throw new Error(`OAuth failed: ${response.status} - ${err}`); }
   const data = await response.json();
   tokenCache = { token: data.access_token, expiresAt: Date.now() + (data.expires_in * 1000) };
   console.log(`[Auth] Token refreshed, expires in ${data.expires_in}s`);
   return data.access_token;
 }
 
+// --- Filters ---
 function buildFilterString({ minPrice, maxPrice, conditions, buyItNowOnly, freeShippingOnly }) {
-  const filters = [];
-  if (buyItNowOnly) filters.push('buyingOptions:{FIXED_PRICE}');
-  if (minPrice && maxPrice) filters.push(`price:[${minPrice}..${maxPrice}],priceCurrency:USD`);
-  else if (minPrice) filters.push(`price:[${minPrice}],priceCurrency:USD`);
-  else if (maxPrice) filters.push(`price:[..${maxPrice}],priceCurrency:USD`);
-
-  if (conditions?.length > 0) {
-    const condMap = { 'New': '1000', 'Open Box': '1500', 'Refurbished': '2000', 'Used': '3000', 'For Parts': '7000' };
-    const ids = conditions.map(c => condMap[c]).filter(Boolean);
-    if (ids.length) filters.push(`conditionIds:{${ids.join('|')}}`);
+  const f = [];
+  if (buyItNowOnly) f.push('buyingOptions:{FIXED_PRICE}');
+  if (minPrice && maxPrice) f.push(`price:[${minPrice}..${maxPrice}],priceCurrency:USD`);
+  else if (minPrice) f.push(`price:[${minPrice}],priceCurrency:USD`);
+  else if (maxPrice) f.push(`price:[..${maxPrice}],priceCurrency:USD`);
+  if (conditions?.length) {
+    const m = { 'New': '1000', 'Open Box': '1500', 'Refurbished': '2000', 'Used': '3000', 'For Parts': '7000' };
+    const ids = conditions.map(c => m[c]).filter(Boolean);
+    if (ids.length) f.push(`conditionIds:{${ids.join('|')}}`);
   }
-
-  if (freeShippingOnly) filters.push('maxDeliveryCost:0');
-  filters.push('deliveryCountry:US');
-  return filters.join(',');
+  if (freeShippingOnly) f.push('maxDeliveryCost:0');
+  f.push('deliveryCountry:US');
+  return f.join(',');
 }
 
 // ============================================================
-// API Routes
+// ROUTES
 // ============================================================
 
 app.post('/api/search', async (req, res) => {
@@ -140,23 +105,22 @@ app.post('/api/search', async (req, res) => {
       minPrice, maxPrice, conditions = [],
       sortBy = 'newly_listed',
       buyItNowOnly = true, freeShippingOnly = false,
-      zipCode = '08823', limit = 20, offset = 0,
+      zipCode = '08823', limit = 50, offset = 0,
     } = req.body;
 
     const url = new URL(`${EBAY_API_URL}/buy/browse/v1/item_summary/search`);
     url.searchParams.set('q', keywords);
     url.searchParams.set('limit', String(limit));
     url.searchParams.set('offset', String(offset));
-
     const filterStr = buildFilterString({ minPrice, maxPrice, conditions, buyItNowOnly, freeShippingOnly });
     if (filterStr) url.searchParams.set('filter', filterStr);
-
     const sortMap = { 'newly_listed': 'newlyListed', 'price_low': 'price', 'price_high': '-price', 'best_match': 'bestMatch' };
     url.searchParams.set('sort', sortMap[sortBy] || 'newlyListed');
 
-    const stats = trackCall();
+    sessionCalls++;
     const ebayStats = await getRealUsage(token);
-    console.log(`[Search] Session #${sessionCalls} | eBay: ${ebayStats ? ebayStats.callsToday + '/' + ebayStats.limit : 'unknown'} | ${url}`);
+    const apiStats = getApiStats(ebayStats);
+    console.log(`[Search] #${sessionCalls} | Used: ${apiStats.callsToday}/${apiStats.limit} | ${url}`);
 
     const response = await fetch(url.toString(), {
       headers: {
@@ -176,12 +140,9 @@ app.post('/api/search', async (req, res) => {
       const shipOpt = item.shippingOptions?.[0];
       const shipType = shipOpt?.shippingCostType || '';
       const shipCostRaw = shipOpt?.shippingCost ? parseFloat(shipOpt.shippingCost.value) : null;
-      
-      // Only trust $0 if it's explicitly FIXED price free shipping
       const isFreeShipping = shipType === 'FIXED' && shipCostRaw === 0;
-      // CALCULATED shipping with $0 = unknown, not free
       const isCalculated = shipType === 'CALCULATED' || (shipCostRaw === 0 && shipType !== 'FIXED');
-      
+
       let shipCost, shipping, shippingKnown;
       if (isFreeShipping) {
         shipCost = 0; shipping = 'Free shipping'; shippingKnown = true;
@@ -194,27 +155,17 @@ app.post('/api/search', async (req, res) => {
       const itemPrice = item.price ? parseFloat(item.price.value) : 0;
       const totalPrice = shippingKnown ? itemPrice + (shipCost || 0) : itemPrice;
       return {
-        id: item.itemId,
-        title: item.title,
-        price: item.price ? `$${item.price.value}` : '',
-        itemPrice,
-        shipping,
-        shipCost: shipCost || 0,
-        totalPrice,
-        shippingKnown,
-        condition: item.condition || '',
-        url: item.itemWebUrl || '',
-        image: item.image?.imageUrl || '',
-        seller: item.seller?.username || '',
+        id: item.itemId, title: item.title,
+        price: item.price ? `$${item.price.value}` : '', itemPrice,
+        shipping, shipCost: shipCost || 0, totalPrice, shippingKnown,
+        condition: item.condition || '', url: item.itemWebUrl || '',
+        image: item.image?.imageUrl || '', seller: item.seller?.username || '',
         sellerRating: item.seller?.feedbackPercentage || '',
         location: item.itemLocation?.postalCode || '',
         listingDate: item.itemCreationDate || '',
       };
     });
 
-    const apiStats = ebayStats
-      ? { callsToday: ebayStats.callsToday, limit: ebayStats.limit, remaining: ebayStats.remaining }
-      : { callsToday: stats.count, limit: 5000, remaining: 5000 - stats.count };
     res.json({ total: data.total || 0, count: listings.length, listings, apiStats });
   } catch (err) {
     console.error('[Search] Error:', err.message);
@@ -226,13 +177,9 @@ app.get('/api/item/:itemId', async (req, res) => {
   try {
     const token = await getAccessToken();
     const response = await fetch(`${EBAY_API_URL}/buy/browse/v1/item/${req.params.itemId}`, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
-        'X-EBAY-C-ENDUSERCTX': `contextualLocation=country=US,zip=${req.query.zip || '08823'}`,
-      },
+      headers: { 'Authorization': `Bearer ${token}`, 'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US', 'X-EBAY-C-ENDUSERCTX': `contextualLocation=country=US,zip=${req.query.zip || '08823'}` },
     });
-    if (!response.ok) return res.status(response.status).json({ error: `Item fetch failed` });
+    if (!response.ok) return res.status(response.status).json({ error: 'Item fetch failed' });
     res.json(await response.json());
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -241,46 +188,23 @@ app.get('/api/health', async (req, res) => {
   try {
     const token = await getAccessToken();
     const ebayStats = await getRealUsage(token);
-    const apiStats = ebayStats
-      ? { callsToday: ebayStats.callsToday, limit: ebayStats.limit, remaining: ebayStats.remaining }
-      : { callsToday: apiCalls.count, limit: 5000, remaining: 5000 - apiCalls.count };
-    res.json({ status: 'ok', env: EBAY_ENV, hasCredentials: !!(EBAY_CLIENT_ID && EBAY_CLIENT_SECRET), apiStats });
+    res.json({ status: 'ok', env: EBAY_ENV, hasCredentials: !!(EBAY_CLIENT_ID && EBAY_CLIENT_SECRET), apiStats: getApiStats(ebayStats) });
   } catch (e) {
-    res.json({ status: 'ok', env: EBAY_ENV, hasCredentials: !!(EBAY_CLIENT_ID && EBAY_CLIENT_SECRET), apiStats: { callsToday: apiCalls.count, limit: 5000, remaining: 5000 - apiCalls.count } });
+    res.json({ status: 'ok', env: EBAY_ENV, hasCredentials: !!(EBAY_CLIENT_ID && EBAY_CLIENT_SECRET), apiStats: getApiStats(null) });
   }
 });
 
-// Real eBay rate limit from their Analytics API
 app.get('/api/rate-limit', async (req, res) => {
   try {
     const token = await getAccessToken();
-    const response = await fetch(`${EBAY_API_URL}/developer/analytics/v1_beta/rate_limit/?api_name=buy.browse`, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-    });
-    if (!response.ok) {
-      return res.json({ error: 'Could not fetch rate limits', local: { callsToday: apiCalls.count, limit: 5000, remaining: 5000 - apiCalls.count } });
-    }
-    const data = await response.json();
-    // Extract Browse API limits
-    const browseApi = data.rateLimits?.find(r => r.apiName === 'buy.browse');
-    const searchResource = browseApi?.resources?.find(r => r.name?.includes('search'));
-    const rate = searchResource?.rates?.[0] || browseApi?.resources?.[0]?.rates?.[0];
-    res.json({
-      ebay: rate ? { count: rate.count, limit: rate.limit, remaining: rate.remaining, reset: rate.timeWindow } : null,
-      local: { callsToday: apiCalls.count, limit: 5000, remaining: 5000 - apiCalls.count },
-      raw: data,
-    });
+    const ebayStats = await getRealUsage(token);
+    res.json({ apiStats: getApiStats(ebayStats), session: sessionCalls, raw: cachedEbayStats });
   } catch (err) {
-    res.json({ error: err.message, local: { callsToday: apiCalls.count, limit: 5000, remaining: 5000 - apiCalls.count } });
+    res.json({ error: err.message, apiStats: getApiStats(null), session: sessionCalls });
   }
 });
 
-// ============================================================
-// Serve React frontend in production
-// ============================================================
+// --- Serve frontend ---
 const clientDist = join(__dirname, 'client', 'dist');
 app.use(express.static(clientDist));
 app.get('*', (req, res, next) => {
@@ -290,6 +214,5 @@ app.get('*', (req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`\n🟢 eBaySnipe running on http://localhost:${PORT}`);
-  console.log(`   Environment: ${EBAY_ENV}`);
-  console.log(`   Serving frontend from: ${clientDist}\n`);
+  console.log(`   Environment: ${EBAY_ENV}\n`);
 });
