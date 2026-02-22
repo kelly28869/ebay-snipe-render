@@ -221,7 +221,7 @@ export default function App() {
           buyItNowOnly: criteria.buyItNowOnly,
           freeShippingOnly: criteria.freeShippingOnly,
           zipCode: ZIP_CODE,
-          limit: 100,
+          limit: 50,
         }),
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Server error ${res.status}`); }
@@ -243,7 +243,7 @@ export default function App() {
           }
         }
         setListings(matched);
-        setHistory(prev => [{ time: new Date(), count: matched.length, keywords: criteria.keywords.length ? criteria.keywords.join(", ") : "all" }, ...prev.slice(0, 99)]);
+        setHistory(prev => [{ time: new Date(), count: matched.length, keywords: criteria.keywords.length ? criteria.keywords.join(", ") : "all" }, ...prev.slice(0, 49)]);
       } else { setListings([]); }
       setLastScan(new Date()); setScanCount(c => c + 1); setCountdown(scanInterval);
     } catch (err) { setError(err.message); } finally { setLoading(false); }
@@ -301,6 +301,22 @@ export default function App() {
       <div style={{ display: "flex", minHeight: "calc(100vh - 57px)" }}>
         {/* Sidebar */}
         <div style={{ width: 360, borderRight: "1px solid #e5e7eb", padding: 20, background: "#fff", flexShrink: 0, overflowY: "auto" }}>
+          {apiStats && (
+            <div style={{ marginBottom: 16, padding: 14, background: apiStats.remaining < 500 ? "#fef2f2" : apiStats.remaining < 1500 ? "#fefce8" : "#f0fdf4", borderRadius: 10, border: `1px solid ${apiStats.remaining < 500 ? "#fecaca" : apiStats.remaining < 1500 ? "#fde68a" : "#bbf7d0"}` }}>
+              <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8, fontWeight: 600 }}>eBay API Usage</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                <span style={{ fontSize: 20, fontWeight: 700, fontFamily: "'DM Sans', sans-serif", color: apiStats.remaining < 500 ? "#dc2626" : apiStats.remaining < 1500 ? "#b45309" : "#16a34a" }}>{apiStats.callsToday.toLocaleString()}</span>
+                <span style={{ fontSize: 11, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>/ 5,000</span>
+              </div>
+              <div style={{ width: "100%", height: 6, background: "#e5e7eb", borderRadius: 3, overflow: "hidden" }}>
+                <div style={{ width: `${(apiStats.callsToday / 5000) * 100}%`, height: "100%", borderRadius: 3, background: apiStats.remaining < 500 ? "#dc2626" : apiStats.remaining < 1500 ? "#eab308" : "#16a34a", transition: "width 0.3s" }} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+                <span style={{ fontSize: 9, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>{apiStats.remaining.toLocaleString()} left</span>
+                <span style={{ fontSize: 9, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>~{Math.floor(apiStats.remaining * scanInterval / 3600)}h at {scanInterval}s</span>
+              </div>
+            </div>
+          )}
           <div style={{ fontSize: 10, color: "#999", textTransform: "uppercase", letterSpacing: 2, marginBottom: 16, fontWeight: 600 }}>Search Criteria</div>
           <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, padding: "10px 14px", marginBottom: 16 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.5"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg><span style={{ fontSize: 10, color: "#16a34a", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5 }}>Locked</span></div>
@@ -342,7 +358,7 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <input type="number" min="5" max="3600" value={scanInterval} onChange={e => setScanInterval(Math.max(5, Math.min(3600, parseInt(e.target.value) || 5)))} style={{ ...inp, width: 90, textAlign: "center", fontWeight: 600 }} />
             <span style={{ fontSize: 11, color: "#999" }}>{scanInterval < 60 ? `${scanInterval}s` : `${(scanInterval / 60).toFixed(1)}m`}</span>
-            <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>{[5, 10, 30].map(v => <button key={v} onClick={() => setScanInterval(v)} style={{ background: scanInterval === v ? "#f0fdf4" : "#f9fafb", border: `1px solid ${scanInterval === v ? "#86efac" : "#e5e7eb"}`, color: scanInterval === v ? "#166534" : "#aaa", padding: "3px 8px", borderRadius: 4, cursor: "pointer", fontSize: 10, fontFamily: "inherit" }}>{v}s</button>)}</div>
+            <div style={{ display: "flex", gap: 3, marginLeft: "auto" }}>{[5, 6, 7, 8, 9, 10].map(v => <button key={v} onClick={() => setScanInterval(v)} style={{ background: scanInterval === v ? "#f0fdf4" : "#f9fafb", border: `1px solid ${scanInterval === v ? "#86efac" : "#e5e7eb"}`, color: scanInterval === v ? "#166534" : "#aaa", padding: "3px 6px", borderRadius: 4, cursor: "pointer", fontSize: 10, fontFamily: "inherit" }}>{v}s</button>)}</div>
           </div>
 
           <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -355,22 +371,6 @@ export default function App() {
               <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10, fontWeight: 600 }}>Session</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 {[{ l: "Scans", v: scanCount }, { l: "Results", v: listings.length }, { l: "Deals", v: dealCount, c: "#16a34a" }, { l: "Over", v: overCount, c: "#dc2626" }].map(s => <div key={s.l}><div style={{ fontSize: 9, color: "#bbb", textTransform: "uppercase", letterSpacing: 1 }}>{s.l}</div><div style={{ fontSize: 14, fontWeight: 600, color: s.c || "#333", fontFamily: "'DM Sans', sans-serif" }}>{s.v}</div></div>)}
-              </div>
-            </div>
-          )}
-          {apiStats && (
-            <div style={{ marginTop: 12, padding: 14, background: apiStats.remaining < 500 ? "#fef2f2" : apiStats.remaining < 1500 ? "#fefce8" : "#f0fdf4", borderRadius: 10, border: `1px solid ${apiStats.remaining < 500 ? "#fecaca" : apiStats.remaining < 1500 ? "#fde68a" : "#bbf7d0"}` }}>
-              <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8, fontWeight: 600 }}>eBay API Usage</div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
-                <span style={{ fontSize: 20, fontWeight: 700, fontFamily: "'DM Sans', sans-serif", color: apiStats.remaining < 500 ? "#dc2626" : apiStats.remaining < 1500 ? "#b45309" : "#16a34a" }}>{apiStats.callsToday.toLocaleString()}</span>
-                <span style={{ fontSize: 11, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>/ 5,000</span>
-              </div>
-              <div style={{ width: "100%", height: 6, background: "#e5e7eb", borderRadius: 3, overflow: "hidden" }}>
-                <div style={{ width: `${(apiStats.callsToday / 5000) * 100}%`, height: "100%", borderRadius: 3, background: apiStats.remaining < 500 ? "#dc2626" : apiStats.remaining < 1500 ? "#eab308" : "#16a34a", transition: "width 0.3s" }} />
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
-                <span style={{ fontSize: 9, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>{apiStats.remaining.toLocaleString()} left</span>
-                <span style={{ fontSize: 9, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>~{Math.floor(apiStats.remaining * scanInterval / 3600)}h at {scanInterval}s</span>
               </div>
             </div>
           )}
