@@ -262,7 +262,6 @@ export default function App() {
   useEffect(() => () => { clearInterval(intervalRef.current); clearInterval(countdownRef.current); }, []);
   useEffect(() => { if (scanning) { clearInterval(intervalRef.current); intervalRef.current = setInterval(runScan, scanInterval * 1000); setCountdown(scanInterval); } }, [scanInterval]);
   useEffect(() => { fetch("/api/health").then(r => r.json()).then(d => { if (d.apiStats) setApiStats(d.apiStats); }).catch(() => {}); }, []);
-  useEffect(() => { fetch("/api/health").then(r => r.json()).then(d => { if (d.apiStats) setApiStats(d.apiStats); }).catch(() => {}); }, []);
 
   const updateCriteria = (k, v) => setCriteria(prev => ({ ...prev, [k]: v }));
   const toggleCondition = (c) => setCriteria(prev => ({ ...prev, conditions: prev.conditions.includes(c) ? prev.conditions.filter(x => x !== c) : [...prev.conditions, c] }));

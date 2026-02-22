@@ -24,6 +24,26 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// API call tracker — resets at midnight Pacific
+let apiCalls = { count: 0, resetAt: getNextMidnightPT() };
+
+function getNextMidnightPT() {
+  const now = new Date();
+  const pt = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+  const midnight = new Date(pt);
+  midnight.setHours(24, 0, 0, 0);
+  const diff = midnight - pt;
+  return new Date(now.getTime() + diff);
+}
+
+function trackCall() {
+  if (Date.now() > apiCalls.resetAt.getTime()) {
+    apiCalls = { count: 0, resetAt: getNextMidnightPT() };
+  }
+  apiCalls.count++;
+  return apiCalls;
+}
+
 const {
   EBAY_CLIENT_ID,
   EBAY_CLIENT_SECRET,
@@ -113,7 +133,8 @@ app.post('/api/search', async (req, res) => {
     const sortMap = { 'newly_listed': 'newlyListed', 'price_low': 'price', 'price_high': '-price', 'best_match': 'bestMatch' };
     url.searchParams.set('sort', sortMap[sortBy] || 'newlyListed');
 
-    console.log(`[Search] ${url}`);
+    const stats = trackCall();
+    console.log(`[Search] Call #${stats.count}/5000 | ${url}`);
 
     const response = await fetch(url.toString(), {
       headers: {
@@ -169,7 +190,7 @@ app.post('/api/search', async (req, res) => {
       };
     });
 
-    res.json({ total: data.total || 0, count: listings.length, listings });
+    res.json({ total: data.total || 0, count: listings.length, listings, apiStats: { callsToday: stats.count, limit: 5000, remaining: 5000 - stats.count, resetsAt: stats.resetAt } });
   } catch (err) {
     console.error('[Search] Error:', err.message);
     res.status(500).json({ error: err.message });
@@ -192,7 +213,7 @@ app.get('/api/item/:itemId', async (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', env: EBAY_ENV, hasCredentials: !!(EBAY_CLIENT_ID && EBAY_CLIENT_SECRET) });
+  res.json({ status: 'ok', env: EBAY_ENV, hasCredentials: !!(EBAY_CLIENT_ID && EBAY_CLIENT_SECRET), apiStats: { callsToday: apiCalls.count, limit: 5000, remaining: 5000 - apiCalls.count, resetsAt: apiCalls.resetAt } });
 });
 
 // ============================================================
