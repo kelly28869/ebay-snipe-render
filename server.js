@@ -155,7 +155,6 @@ app.post('/api/search', async (req, res) => {
     url.searchParams.set('sort', sortMap[sortBy] || 'newlyListed');
 
     const stats = trackCall();
-    const token = await getAccessToken();
     const ebayStats = await getRealUsage(token);
     console.log(`[Search] Session #${sessionCalls} | eBay: ${ebayStats ? ebayStats.callsToday + '/' + ebayStats.limit : 'unknown'} | ${url}`);
 
@@ -213,7 +212,10 @@ app.post('/api/search', async (req, res) => {
       };
     });
 
-    res.json({ total: data.total || 0, count: listings.length, listings, apiStats: { callsToday: stats.count, limit: 5000, remaining: 5000 - stats.count, resetsAt: stats.resetAt } });
+    const apiStats = ebayStats
+      ? { callsToday: ebayStats.callsToday, limit: ebayStats.limit, remaining: ebayStats.remaining }
+      : { callsToday: stats.count, limit: 5000, remaining: 5000 - stats.count };
+    res.json({ total: data.total || 0, count: listings.length, listings, apiStats });
   } catch (err) {
     console.error('[Search] Error:', err.message);
     res.status(500).json({ error: err.message });
@@ -235,8 +237,17 @@ app.get('/api/item/:itemId', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', env: EBAY_ENV, hasCredentials: !!(EBAY_CLIENT_ID && EBAY_CLIENT_SECRET), apiStats: { callsToday: apiCalls.count, limit: 5000, remaining: 5000 - apiCalls.count, resetsAt: apiCalls.resetAt } });
+app.get('/api/health', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const ebayStats = await getRealUsage(token);
+    const apiStats = ebayStats
+      ? { callsToday: ebayStats.callsToday, limit: ebayStats.limit, remaining: ebayStats.remaining }
+      : { callsToday: apiCalls.count, limit: 5000, remaining: 5000 - apiCalls.count };
+    res.json({ status: 'ok', env: EBAY_ENV, hasCredentials: !!(EBAY_CLIENT_ID && EBAY_CLIENT_SECRET), apiStats });
+  } catch (e) {
+    res.json({ status: 'ok', env: EBAY_ENV, hasCredentials: !!(EBAY_CLIENT_ID && EBAY_CLIENT_SECRET), apiStats: { callsToday: apiCalls.count, limit: 5000, remaining: 5000 - apiCalls.count } });
+  }
 });
 
 // Real eBay rate limit from their Analytics API
