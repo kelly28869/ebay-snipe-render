@@ -150,7 +150,7 @@ export default function App() {
   const [listings, setListings] = useState([]);
   const [scanning, setScanning] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [scanInterval, setScanInterval] = useState(60);
+  const [scanInterval, setScanInterval] = useState(10);
   const [lastScan, setLastScan] = useState(null);
   const [error, setError] = useState(null);
   const [scanCount, setScanCount] = useState(0);
@@ -166,15 +166,22 @@ export default function App() {
     try { const ctx = new AudioContext(); const o = ctx.createOscillator(); const g = ctx.createGain(); o.connect(g); g.connect(ctx.destination); o.frequency.setValueAtTime(880, ctx.currentTime); o.frequency.setValueAtTime(1320, ctx.currentTime + 0.15); g.gain.setValueAtTime(0.15, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3); o.start(); o.stop(ctx.currentTime + 0.3); } catch (e) {}
   }, []);
 
+  // Client-side keyword filter: listing title must contain ANY selected keyword
+  const matchesKeywords = useCallback((title) => {
+    if (!criteria.keywords.length) return true;
+    const t = title.toUpperCase();
+    return criteria.keywords.some(k => t.includes(k.toUpperCase()));
+  }, [criteria.keywords]);
+
   const runScan = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const keywords = [BASE_SEARCH, ...criteria.keywords].join(" ");
+      // Always search broadly — keywords filter client-side
       const res = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          keywords,
+          keywords: BASE_SEARCH,
           minPrice: criteria.minPrice || undefined,
           maxPrice: criteria.maxPrice || undefined,
           conditions: criteria.conditions,
@@ -182,30 +189,32 @@ export default function App() {
           buyItNowOnly: criteria.buyItNowOnly,
           freeShippingOnly: criteria.freeShippingOnly,
           zipCode: ZIP_CODE,
-          limit: 20,
+          limit: 50,
         }),
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Server error ${res.status}`); }
       const data = await res.json();
 
       if (data.listings?.length > 0) {
+        // Filter by keywords client-side (ANY match)
+        const matched = data.listings.filter(l => matchesKeywords(l.title));
         const prevIds = new Set(listings.map(l => l.id));
         const freshNew = new Set();
-        data.listings.forEach(l => { if (!prevIds.has(l.id)) freshNew.add(l.id); });
+        matched.forEach(l => { if (!prevIds.has(l.id)) freshNew.add(l.id); });
         if (freshNew.size > 0 && scanCount > 0) {
           playNotification();
           setNewIds(freshNew);
           setTimeout(() => setNewIds(new Set()), 8000);
           if (Notification.permission === "granted") {
-            new Notification(`eBaySnipe: ${freshNew.size} new listing(s)!`, { body: data.listings.find(l => freshNew.has(l.id))?.title || "" });
+            new Notification(`eBaySnipe: ${freshNew.size} new listing(s)!`, { body: matched.find(l => freshNew.has(l.id))?.title || "" });
           }
         }
-        setListings(data.listings);
-        setHistory(prev => [{ time: new Date(), count: data.listings.length, keywords }, ...prev.slice(0, 49)]);
+        setListings(matched);
+        setHistory(prev => [{ time: new Date(), count: matched.length, keywords: criteria.keywords.length ? criteria.keywords.join(", ") : "all" }, ...prev.slice(0, 49)]);
       } else { setListings([]); }
       setLastScan(new Date()); setScanCount(c => c + 1); setCountdown(scanInterval);
     } catch (err) { setError(err.message); } finally { setLoading(false); }
-  }, [criteria, listings, scanCount, scanInterval, playNotification]);
+  }, [criteria, listings, scanCount, scanInterval, playNotification, matchesKeywords]);
 
   const toggleScanning = useCallback(() => {
     if (scanning) { clearInterval(intervalRef.current); clearInterval(countdownRef.current); setScanning(false); setCountdown(null); }
