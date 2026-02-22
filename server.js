@@ -24,24 +24,45 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// API call tracker — resets at midnight Pacific
-let apiCalls = { count: 0, resetAt: getNextMidnightPT() };
-
-function getNextMidnightPT() {
-  const now = new Date();
-  const pt = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
-  const midnight = new Date(pt);
-  midnight.setHours(24, 0, 0, 0);
-  const diff = midnight - pt;
-  return new Date(now.getTime() + diff);
-}
+// API call tracker — local session counter + real eBay Analytics API
+let sessionCalls = 0;
+let cachedEbayStats = null;
+let lastStatsFetch = 0;
 
 function trackCall() {
-  if (Date.now() > apiCalls.resetAt.getTime()) {
-    apiCalls = { count: 0, resetAt: getNextMidnightPT() };
+  sessionCalls++;
+}
+
+// Fetch real usage from eBay Developer Analytics API (cached 60s)
+async function getRealUsage(token) {
+  const now = Date.now();
+  if (cachedEbayStats && now - lastStatsFetch < 60000) return cachedEbayStats;
+
+  try {
+    const url = EBAY_ENV === 'sandbox'
+      ? 'https://api.sandbox.ebay.com/developer/analytics/v1_beta/rate_limit/?api_name=buy.browse'
+      : 'https://api.ebay.com/developer/analytics/v1_beta/rate_limit/?api_name=buy.browse';
+
+    const res = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!res.ok) return cachedEbayStats;
+
+    const data = await res.json();
+    const limits = data.rateLimits?.[0]?.resources?.[0]?.rates?.[0];
+    if (limits) {
+      cachedEbayStats = {
+        callsToday: limits.limit - limits.remaining,
+        limit: limits.limit,
+        remaining: limits.remaining,
+        resetsAt: limits.reset,
+      };
+      lastStatsFetch = now;
+    }
+  } catch (e) {
+    console.log('[Stats] Could not fetch eBay usage:', e.message);
   }
-  apiCalls.count++;
-  return apiCalls;
+  return cachedEbayStats;
 }
 
 const {
@@ -134,7 +155,9 @@ app.post('/api/search', async (req, res) => {
     url.searchParams.set('sort', sortMap[sortBy] || 'newlyListed');
 
     const stats = trackCall();
-    console.log(`[Search] Call #${stats.count}/5000 | ${url}`);
+    const token = await getAccessToken();
+    const ebayStats = await getRealUsage(token);
+    console.log(`[Search] Session #${sessionCalls} | eBay: ${ebayStats ? ebayStats.callsToday + '/' + ebayStats.limit : 'unknown'} | ${url}`);
 
     const response = await fetch(url.toString(), {
       headers: {
@@ -214,6 +237,34 @@ app.get('/api/item/:itemId', async (req, res) => {
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', env: EBAY_ENV, hasCredentials: !!(EBAY_CLIENT_ID && EBAY_CLIENT_SECRET), apiStats: { callsToday: apiCalls.count, limit: 5000, remaining: 5000 - apiCalls.count, resetsAt: apiCalls.resetAt } });
+});
+
+// Real eBay rate limit from their Analytics API
+app.get('/api/rate-limit', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const response = await fetch(`${EBAY_API_URL}/developer/analytics/v1_beta/rate_limit/?api_name=buy.browse`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!response.ok) {
+      return res.json({ error: 'Could not fetch rate limits', local: { callsToday: apiCalls.count, limit: 5000, remaining: 5000 - apiCalls.count } });
+    }
+    const data = await response.json();
+    // Extract Browse API limits
+    const browseApi = data.rateLimits?.find(r => r.apiName === 'buy.browse');
+    const searchResource = browseApi?.resources?.find(r => r.name?.includes('search'));
+    const rate = searchResource?.rates?.[0] || browseApi?.resources?.[0]?.rates?.[0];
+    res.json({
+      ebay: rate ? { count: rate.count, limit: rate.limit, remaining: rate.remaining, reset: rate.timeWindow } : null,
+      local: { callsToday: apiCalls.count, limit: 5000, remaining: 5000 - apiCalls.count },
+      raw: data,
+    });
+  } catch (err) {
+    res.json({ error: err.message, local: { callsToday: apiCalls.count, limit: 5000, remaining: 5000 - apiCalls.count } });
+  }
 });
 
 // ============================================================
