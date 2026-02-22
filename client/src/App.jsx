@@ -169,7 +169,8 @@ export default function App() {
   const runScan = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const keywords = [BASE_SEARCH, ...criteria.keywords].join(" ");
+      const filterPart = criteria.keywords.length ? " (" + criteria.keywords.join(" OR ") + ")" : "";
+      const keywords = BASE_SEARCH + filterPart;
       const res = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
