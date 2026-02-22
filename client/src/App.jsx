@@ -245,7 +245,19 @@ export default function App() {
         setListings(matched);
         setHistory(prev => [{ time: new Date(), count: matched.length, keywords: criteria.keywords.length ? criteria.keywords.join(", ") : "all" }, ...prev.slice(0, 49)]);
       } else { setListings([]); }
-      setLastScan(new Date()); setScanCount(c => c + 1); setCountdown(scanInterval);
+      setLastScan(new Date()); setScanCount(c => {
+        const next = c + 1;
+        // Update from real eBay rate limit every 10 scans
+        if (next % 10 === 0) {
+          fetch("/api/rate-limit").then(r => r.json()).then(d => {
+            if (d.ebay) setApiStats({ callsToday: d.ebay.count, limit: d.ebay.limit, remaining: d.ebay.remaining });
+          }).catch(() => {});
+        } else if (data.apiStats) {
+          // Use local server count between eBay refreshes
+          setApiStats(prev => prev?.limit > 5000 ? prev : { callsToday: data.apiStats.callsToday, limit: data.apiStats.limit, remaining: data.apiStats.remaining });
+        }
+        return next;
+      }); setCountdown(scanInterval);
     } catch (err) { setError(err.message); } finally { setLoading(false); }
   }, [criteria, listings, scanCount, scanInterval, playNotification, matchesKeywords]);
 
@@ -261,15 +273,21 @@ export default function App() {
 
   useEffect(() => () => { clearInterval(intervalRef.current); clearInterval(countdownRef.current); }, []);
   useEffect(() => { if (scanning) { clearInterval(intervalRef.current); intervalRef.current = setInterval(runScan, scanInterval * 1000); setCountdown(scanInterval); } }, [scanInterval]);
-  useEffect(() => { fetch("/api/health").then(r => r.json()).then(d => { if (d.apiStats) setApiStats(d.apiStats); }).catch(() => {}); }, []);
+  useEffect(() => {
+    fetch("/api/rate-limit").then(r => r.json()).then(d => {
+      if (d.ebay) setApiStats({ callsToday: d.ebay.count, limit: d.ebay.limit, remaining: d.ebay.remaining });
+      else if (d.local) setApiStats({ callsToday: d.local.callsToday, limit: d.local.limit, remaining: d.local.remaining });
+    }).catch(() => {});
+  }, []);
 
   const updateCriteria = (k, v) => setCriteria(prev => ({ ...prev, [k]: v }));
   const toggleCondition = (c) => setCriteria(prev => ({ ...prev, conditions: prev.conditions.includes(c) ? prev.conditions.filter(x => x !== c) : [...prev.conditions, c] }));
 
   const enriched = listings.map(l => ({ ...l, rule: matchPriceRule(l, priceRules) }));
-  const filtered = enriched.filter(l => { if (filterMode === "deals") return l.rule?.underBudget; if (filterMode === "over") return l.rule && !l.rule.underBudget; return true; });
+  const filtered = enriched.filter(l => { if (filterMode === "deals") return l.rule?.underBudget; if (filterMode === "maybe") return l.rule?.shipUnknown && l.rule.savings > 0; if (filterMode === "over") return l.rule && !l.rule.underBudget && !(l.rule.shipUnknown && l.rule.savings > 0); return true; });
   const dealCount = enriched.filter(l => l.rule?.underBudget).length;
-  const overCount = enriched.filter(l => l.rule && !l.rule.underBudget).length;
+  const maybeCount = enriched.filter(l => l.rule?.shipUnknown && l.rule.savings > 0).length;
+  const overCount = enriched.filter(l => l.rule && !l.rule.underBudget && !(l.rule.shipUnknown && l.rule.savings > 0)).length;
 
   return (
     <div style={{ minHeight: "100vh", background: "#fafafa", color: "#1a1a1a", fontFamily: "'IBM Plex Mono', 'SF Mono', monospace" }}>
@@ -370,8 +388,8 @@ export default function App() {
           {lastScan && (
             <div style={{ marginTop: 20, padding: 14, background: "#f9fafb", borderRadius: 10 }}>
               <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10, fontWeight: 600 }}>Session</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                {[{ l: "Scans", v: scanCount }, { l: "Results", v: listings.length }, { l: "Deals", v: dealCount, c: "#16a34a" }, { l: "Over", v: overCount, c: "#dc2626" }].map(s => <div key={s.l}><div style={{ fontSize: 9, color: "#bbb", textTransform: "uppercase", letterSpacing: 1 }}>{s.l}</div><div style={{ fontSize: 14, fontWeight: 600, color: s.c || "#333", fontFamily: "'DM Sans', sans-serif" }}>{s.v}</div></div>)}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                {[{ l: "Scans", v: scanCount }, { l: "Results", v: listings.length }, { l: "Deals", v: dealCount, c: "#16a34a" }, { l: "Maybe", v: maybeCount, c: "#b45309" }, { l: "Over", v: overCount, c: "#dc2626" }].map(s => <div key={s.l}><div style={{ fontSize: 9, color: "#bbb", textTransform: "uppercase", letterSpacing: 1 }}>{s.l}</div><div style={{ fontSize: 14, fontWeight: 600, color: s.c || "#333", fontFamily: "'DM Sans', sans-serif" }}>{s.v}</div></div>)}
               </div>
             </div>
           )}
@@ -387,19 +405,20 @@ export default function App() {
             {listings.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <div style={{ display: "flex", gap: 4, background: "#f3f4f6", borderRadius: 8, padding: 3 }}>
-                  {[{ k: "all", l: `All (${enriched.length})` }, { k: "deals", l: `Deals (${dealCount})`, c: "#16a34a" }, { k: "over", l: `Over (${overCount})`, c: "#dc2626" }].map(f => <button key={f.k} onClick={() => setFilterMode(f.k)} style={{ background: filterMode === f.k ? "#fff" : "transparent", border: "none", boxShadow: filterMode === f.k ? "0 1px 3px rgba(0,0,0,0.08)" : "none", color: filterMode === f.k ? (f.c || "#111") : "#999", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600 }}>{f.l}</button>)}
+                  {[{ k: "all", l: `All (${enriched.length})` }, { k: "deals", l: `Deals (${dealCount})`, c: "#16a34a" }, { k: "maybe", l: `Maybe (${maybeCount})`, c: "#b45309" }, { k: "over", l: `Over (${overCount})`, c: "#dc2626" }].map(f => <button key={f.k} onClick={() => setFilterMode(f.k)} style={{ background: filterMode === f.k ? "#fff" : "transparent", border: "none", boxShadow: filterMode === f.k ? "0 1px 3px rgba(0,0,0,0.08)" : "none", color: filterMode === f.k ? (f.c || "#111") : "#999", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600 }}>{f.l}</button>)}
                 </div>
                 {loading && <span style={{ fontSize: 11, color: "#16a34a", animation: "pulse 1s infinite" }}>● Updating...</span>}
               </div>
 
               {filtered.map((li, i) => {
-                const r = li.rule; const isDeal = r?.underBudget; const isOver = r && !r.underBudget;
-                return (<div key={li.id} style={{ background: isDeal ? "#f0fdf4" : isOver ? "#fefce8" : "#fff", border: `1px solid ${isDeal ? "#86efac" : isOver ? "#fde68a" : "#f3f4f6"}`, borderLeft: isDeal ? "4px solid #16a34a" : isOver ? "4px solid #eab308" : "4px solid transparent", borderRadius: 12, padding: 16, animation: `slideIn 0.3s ease ${i * 0.04}s both${isDeal ? ", dealPulse 2s ease 1" : ""}`, boxShadow: isDeal ? "0 2px 12px #16a34a11" : "0 1px 3px rgba(0,0,0,0.03)" }}>
+                const r = li.rule; const isDeal = r?.underBudget; const isMaybe = r?.shipUnknown && r.savings > 0; const isOver = r && !r.underBudget && !isMaybe;
+                return (<div key={li.id} style={{ background: isDeal ? "#f0fdf4" : isMaybe ? "#fffbeb" : isOver ? "#fefce8" : "#fff", border: `1px solid ${isDeal ? "#86efac" : isMaybe ? "#fde68a" : isOver ? "#fde68a" : "#f3f4f6"}`, borderLeft: isDeal ? "4px solid #16a34a" : isMaybe ? "4px solid #f59e0b" : isOver ? "4px solid #eab308" : "4px solid transparent", borderRadius: 12, padding: 16, animation: `slideIn 0.3s ease ${i * 0.04}s both${isDeal ? ", dealPulse 2s ease 1" : ""}`, boxShadow: isDeal ? "0 2px 12px #16a34a11" : "0 1px 3px rgba(0,0,0,0.03)" }}>
                   <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
                     {li.image && <img src={li.image} alt="" style={{ width: 72, height: 72, borderRadius: 8, objectFit: "cover", background: "#f3f4f6", flexShrink: 0 }} />}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 500, color: "#222", lineHeight: 1.5, marginBottom: 8 }}>
                         {isDeal && <span style={{ background: "#16a34a", color: "#fff", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20, marginRight: 8, textTransform: "uppercase", letterSpacing: 1, fontFamily: "'IBM Plex Mono', monospace" }}>✓ Deal</span>}
+                        {isMaybe && <span style={{ background: "#f59e0b", color: "#fff", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20, marginRight: 8, textTransform: "uppercase", letterSpacing: 1, fontFamily: "'IBM Plex Mono', monospace" }}>? Maybe</span>}
                         {isOver && <span style={{ background: "#fbbf24", color: "#78350f", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20, marginRight: 8, textTransform: "uppercase", fontFamily: "'IBM Plex Mono', monospace" }}>Over</span>}
                         {r?.shipUnknown && <span style={{ background: "#fef3c7", color: "#b45309", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20, marginRight: 8, textTransform: "uppercase", fontFamily: "'IBM Plex Mono', monospace", border: "1px solid #fde68a" }}>⚠ Ship TBD</span>}
                         {newIds.has(li.id) && <span style={{ background: "#eff6ff", color: "#1e40af", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20, marginRight: 8, textTransform: "uppercase", fontFamily: "'IBM Plex Mono', monospace", border: "1px solid #bfdbfe" }}>New</span>}
@@ -407,7 +426,7 @@ export default function App() {
                       </div>
                       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                         <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                          <span style={{ color: isDeal ? "#16a34a" : isOver ? "#b45309" : "#16a34a", fontSize: 20, fontWeight: 700, fontFamily: "'DM Sans', sans-serif" }}>${li.totalPrice.toFixed(2)}</span>
+                          <span style={{ color: isDeal ? "#16a34a" : isMaybe ? "#b45309" : isOver ? "#b45309" : "#16a34a", fontSize: 20, fontWeight: 700, fontFamily: "'DM Sans', sans-serif" }}>${li.totalPrice.toFixed(2)}</span>
                           <span style={{ fontSize: 10, color: li.shippingKnown === false ? "#f59e0b" : "#999", fontFamily: "'IBM Plex Mono', monospace" }}>
                             {li.shippingKnown === false ? `($${li.itemPrice.toFixed(2)} + ship TBD)` : `($${li.itemPrice.toFixed(2)} + $${li.shipCost.toFixed(2)} ship)`}
                           </span>
@@ -418,7 +437,7 @@ export default function App() {
                         {li.seller && <span style={{ fontSize: 10, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>@{li.seller}</span>}
                       </div>
                     </div>
-                    {li.url && <a href={li.url} target="_blank" rel="noopener noreferrer" style={{ background: isDeal ? "#16a34a" : "#555", border: "none", color: "#fff", padding: "10px 20px", borderRadius: 10, textDecoration: "none", fontSize: 12, fontWeight: 600, fontFamily: "'DM Sans', sans-serif", display: "flex", alignItems: "center", gap: 6, boxShadow: isDeal ? "0 2px 8px #16a34a33" : "0 2px 8px rgba(0,0,0,0.1)", flexShrink: 0 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>BUY</a>}
+                    {li.url && <a href={li.url} target="_blank" rel="noopener noreferrer" style={{ background: isDeal ? "#16a34a" : isMaybe ? "#f59e0b" : "#555", border: "none", color: "#fff", padding: "10px 20px", borderRadius: 10, textDecoration: "none", fontSize: 12, fontWeight: 600, fontFamily: "'DM Sans', sans-serif", display: "flex", alignItems: "center", gap: 6, boxShadow: isDeal ? "0 2px 8px #16a34a33" : "0 2px 8px rgba(0,0,0,0.1)", flexShrink: 0 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>BUY</a>}
                   </div>
                 </div>);
               })}
