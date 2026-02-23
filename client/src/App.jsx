@@ -93,7 +93,7 @@ function matchPriceRule(listing, rules) {
     if (spec > bestSpec) {
       bestSpec = spec;
       const adj = rule.maxPrice * qty;
-      bestMatch = { ...rule, qty, totalPrice, adjustedMax: adj, underBudget: totalPrice <= adj, savings: adj - totalPrice, perUnit: qty > 1 ? totalPrice / qty : null };
+      bestMatch = { ...rule, qty, totalPrice, adjustedMax: adj, underBudget: listing.shippingKnown === false ? false : totalPrice <= adj, savings: adj - totalPrice, perUnit: qty > 1 ? totalPrice / qty : null, shipUnknown: listing.shippingKnown === false };
     }
   }
   return bestMatch;
@@ -190,11 +190,47 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [countdown, setCountdown] = useState(null);
   const [filterMode, setFilterMode] = useState("all");
+  const [apiStats, setApiStats] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 768);
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  useEffect(() => {
+    const onResize = () => { const m = window.innerWidth <= 768; setIsMobile(m); if (!m && !sidebarOpen) setSidebarOpen(true); };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [sidebarOpen]);
   const intervalRef = useRef(null);
   const countdownRef = useRef(null);
+  const audioCtxRef = useRef(null);
+
+  // Unlock audio on user gesture (needed for iOS/iPad)
+  const unlockAudio = useCallback(() => {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtxRef.current.state === "suspended") {
+      audioCtxRef.current.resume();
+    }
+    // Play a silent buffer to fully unlock on iOS
+    const buf = audioCtxRef.current.createBuffer(1, 1, 22050);
+    const src = audioCtxRef.current.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioCtxRef.current.destination);
+    src.start(0);
+  }, []);
 
   const playNotification = useCallback(() => {
-    try { const ctx = new AudioContext(); const o = ctx.createOscillator(); const g = ctx.createGain(); o.connect(g); g.connect(ctx.destination); o.frequency.setValueAtTime(880, ctx.currentTime); o.frequency.setValueAtTime(1320, ctx.currentTime + 0.15); g.gain.setValueAtTime(0.15, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3); o.start(); o.stop(ctx.currentTime + 0.3); } catch (e) {}
+    try {
+      const ctx = audioCtxRef.current;
+      if (!ctx) return;
+      if (ctx.state === "suspended") ctx.resume();
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.setValueAtTime(880, ctx.currentTime);
+      o.frequency.setValueAtTime(1320, ctx.currentTime + 0.15);
+      g.gain.setValueAtTime(0.3, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+      o.start(); o.stop(ctx.currentTime + 0.4);
+    } catch (e) {}
   }, []);
 
   // Client-side keyword filter: listing title must contain ANY selected keyword
@@ -225,6 +261,7 @@ export default function App() {
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Server error ${res.status}`); }
       const data = await res.json();
+      if (data.apiStats) setApiStats(data.apiStats);
 
       if (data.listings?.length > 0) {
         // Filter by keywords client-side (ANY match)
@@ -243,30 +280,50 @@ export default function App() {
         setListings(matched);
         setHistory(prev => [{ time: new Date(), count: matched.length, keywords: criteria.keywords.length ? criteria.keywords.join(", ") : "all" }, ...prev.slice(0, 49)]);
       } else { setListings([]); }
-      setLastScan(new Date()); setScanCount(c => c + 1); setCountdown(scanInterval);
+      setLastScan(new Date()); setScanCount(c => {
+        const next = c + 1;
+        // Update from real eBay rate limit every 10 scans
+        if (next % 10 === 0) {
+          fetch("/api/rate-limit").then(r => r.json()).then(d => {
+            if (d.ebay) setApiStats({ callsToday: d.ebay.count, limit: d.ebay.limit, remaining: d.ebay.remaining });
+          }).catch(() => {});
+        } else if (data.apiStats) {
+          // Use local server count between eBay refreshes
+          setApiStats(prev => prev?.limit > 5000 ? prev : { callsToday: data.apiStats.callsToday, limit: data.apiStats.limit, remaining: data.apiStats.remaining });
+        }
+        return next;
+      }); setCountdown(scanInterval);
     } catch (err) { setError(err.message); } finally { setLoading(false); }
   }, [criteria, listings, scanCount, scanInterval, playNotification, matchesKeywords]);
 
   const toggleScanning = useCallback(() => {
     if (scanning) { clearInterval(intervalRef.current); clearInterval(countdownRef.current); setScanning(false); setCountdown(null); }
     else {
+      unlockAudio(); // Unlock AudioContext on user tap (required for iOS/iPad)
       setScanning(true); runScan();
       intervalRef.current = setInterval(runScan, scanInterval * 1000);
       countdownRef.current = setInterval(() => setCountdown(c => c > 0 ? c - 1 : scanInterval), 1000);
       if (Notification.permission === "default") Notification.requestPermission();
     }
-  }, [scanning, scanInterval, runScan]);
+  }, [scanning, scanInterval, runScan, unlockAudio]);
 
   useEffect(() => () => { clearInterval(intervalRef.current); clearInterval(countdownRef.current); }, []);
   useEffect(() => { if (scanning) { clearInterval(intervalRef.current); intervalRef.current = setInterval(runScan, scanInterval * 1000); setCountdown(scanInterval); } }, [scanInterval]);
+  useEffect(() => {
+    fetch("/api/rate-limit").then(r => r.json()).then(d => {
+      if (d.ebay) setApiStats({ callsToday: d.ebay.count, limit: d.ebay.limit, remaining: d.ebay.remaining });
+      else if (d.local) setApiStats({ callsToday: d.local.callsToday, limit: d.local.limit, remaining: d.local.remaining });
+    }).catch(() => {});
+  }, []);
 
   const updateCriteria = (k, v) => setCriteria(prev => ({ ...prev, [k]: v }));
   const toggleCondition = (c) => setCriteria(prev => ({ ...prev, conditions: prev.conditions.includes(c) ? prev.conditions.filter(x => x !== c) : [...prev.conditions, c] }));
 
   const enriched = listings.map(l => ({ ...l, rule: matchPriceRule(l, priceRules) }));
-  const filtered = enriched.filter(l => { if (filterMode === "deals") return l.rule?.underBudget; if (filterMode === "over") return l.rule && !l.rule.underBudget; return true; });
+  const filtered = enriched.filter(l => { if (filterMode === "deals") return l.rule?.underBudget; if (filterMode === "maybe") return l.rule?.shipUnknown && l.rule.savings > 0; if (filterMode === "over") return l.rule && !l.rule.underBudget && !(l.rule.shipUnknown && l.rule.savings > 0); return true; });
   const dealCount = enriched.filter(l => l.rule?.underBudget).length;
-  const overCount = enriched.filter(l => l.rule && !l.rule.underBudget).length;
+  const maybeCount = enriched.filter(l => l.rule?.shipUnknown && l.rule.savings > 0).length;
+  const overCount = enriched.filter(l => l.rule && !l.rule.underBudget && !(l.rule.shipUnknown && l.rule.savings > 0)).length;
 
   return (
     <div style={{ minHeight: "100vh", background: "#fafafa", color: "#1a1a1a", fontFamily: "'IBM Plex Mono', 'SF Mono', monospace" }}>
@@ -296,9 +353,31 @@ export default function App() {
         </div>
       </div>
 
-      <div style={{ display: "flex", minHeight: "calc(100vh - 57px)" }}>
+      <div style={{ display: "flex", minHeight: "calc(100vh - 57px)", position: "relative" }}>
+        {/* Sidebar Toggle */}
+        <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ position: "fixed", bottom: 20, left: sidebarOpen && !isMobile ? 370 : 10, zIndex: 100, background: sidebarOpen ? "#dc2626" : "#16a34a", color: "#fff", border: "none", width: 44, height: 44, borderRadius: 22, cursor: "pointer", boxShadow: "0 2px 12px rgba(0,0,0,0.25)", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", transition: "left 0.3s, background 0.3s" }}>{sidebarOpen ? "✕" : "☰"}</button>
+
+        {/* Sidebar Overlay (mobile) */}
+        {sidebarOpen && isMobile && <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 49 }} />}
+
         {/* Sidebar */}
-        <div style={{ width: 360, borderRight: "1px solid #e5e7eb", padding: 20, background: "#fff", flexShrink: 0, overflowY: "auto" }}>
+        <div style={{ width: sidebarOpen ? 360 : 0, minWidth: sidebarOpen ? 360 : 0, maxWidth: sidebarOpen ? "90vw" : 0, borderRight: sidebarOpen ? "1px solid #e5e7eb" : "none", padding: sidebarOpen ? 20 : 0, background: "#fff", flexShrink: 0, overflowY: "auto", overflowX: "hidden", transition: "all 0.3s", opacity: sidebarOpen ? 1 : 0, position: isMobile ? "fixed" : "relative", top: isMobile ? 57 : "auto", left: 0, bottom: 0, zIndex: isMobile ? 50 : "auto" }}>
+          {apiStats && (
+            <div style={{ marginBottom: 16, padding: 14, background: apiStats.remaining < 500 ? "#fef2f2" : apiStats.remaining < 1500 ? "#fefce8" : "#f0fdf4", borderRadius: 10, border: `1px solid ${apiStats.remaining < 500 ? "#fecaca" : apiStats.remaining < 1500 ? "#fde68a" : "#bbf7d0"}` }}>
+              <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8, fontWeight: 600 }}>eBay API Usage</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                <span style={{ fontSize: 20, fontWeight: 700, fontFamily: "'DM Sans', sans-serif", color: apiStats.remaining < 500 ? "#dc2626" : apiStats.remaining < 1500 ? "#b45309" : "#16a34a" }}>{apiStats.callsToday.toLocaleString()}</span>
+                <span style={{ fontSize: 11, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>/ 5,000</span>
+              </div>
+              <div style={{ width: "100%", height: 6, background: "#e5e7eb", borderRadius: 3, overflow: "hidden" }}>
+                <div style={{ width: `${(apiStats.callsToday / 5000) * 100}%`, height: "100%", borderRadius: 3, background: apiStats.remaining < 500 ? "#dc2626" : apiStats.remaining < 1500 ? "#eab308" : "#16a34a", transition: "width 0.3s" }} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+                <span style={{ fontSize: 9, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>{apiStats.remaining.toLocaleString()} left</span>
+                <span style={{ fontSize: 9, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>~{Math.floor(apiStats.remaining * scanInterval / 3600)}h at {scanInterval}s</span>
+              </div>
+            </div>
+          )}
           <div style={{ fontSize: 10, color: "#999", textTransform: "uppercase", letterSpacing: 2, marginBottom: 16, fontWeight: 600 }}>Search Criteria</div>
           <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, padding: "10px 14px", marginBottom: 16 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.5"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg><span style={{ fontSize: 10, color: "#16a34a", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5 }}>Locked</span></div>
@@ -340,7 +419,7 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <input type="number" min="5" max="3600" value={scanInterval} onChange={e => setScanInterval(Math.max(5, Math.min(3600, parseInt(e.target.value) || 5)))} style={{ ...inp, width: 90, textAlign: "center", fontWeight: 600 }} />
             <span style={{ fontSize: 11, color: "#999" }}>{scanInterval < 60 ? `${scanInterval}s` : `${(scanInterval / 60).toFixed(1)}m`}</span>
-            <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>{[5, 10, 30].map(v => <button key={v} onClick={() => setScanInterval(v)} style={{ background: scanInterval === v ? "#f0fdf4" : "#f9fafb", border: `1px solid ${scanInterval === v ? "#86efac" : "#e5e7eb"}`, color: scanInterval === v ? "#166534" : "#aaa", padding: "3px 8px", borderRadius: 4, cursor: "pointer", fontSize: 10, fontFamily: "inherit" }}>{v}s</button>)}</div>
+            <div style={{ display: "flex", gap: 3, marginLeft: "auto" }}>{[5, 6, 7, 8, 9, 10].map(v => <button key={v} onClick={() => setScanInterval(v)} style={{ background: scanInterval === v ? "#f0fdf4" : "#f9fafb", border: `1px solid ${scanInterval === v ? "#86efac" : "#e5e7eb"}`, color: scanInterval === v ? "#166534" : "#aaa", padding: "3px 6px", borderRadius: 4, cursor: "pointer", fontSize: 10, fontFamily: "inherit" }}>{v}s</button>)}</div>
           </div>
 
           <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -351,15 +430,15 @@ export default function App() {
           {lastScan && (
             <div style={{ marginTop: 20, padding: 14, background: "#f9fafb", borderRadius: 10 }}>
               <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10, fontWeight: 600 }}>Session</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                {[{ l: "Scans", v: scanCount }, { l: "Results", v: listings.length }, { l: "Deals", v: dealCount, c: "#16a34a" }, { l: "Over", v: overCount, c: "#dc2626" }].map(s => <div key={s.l}><div style={{ fontSize: 9, color: "#bbb", textTransform: "uppercase", letterSpacing: 1 }}>{s.l}</div><div style={{ fontSize: 14, fontWeight: 600, color: s.c || "#333", fontFamily: "'DM Sans', sans-serif" }}>{s.v}</div></div>)}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                {[{ l: "Scans", v: scanCount }, { l: "Results", v: listings.length }, { l: "Deals", v: dealCount, c: "#16a34a" }, { l: "Maybe", v: maybeCount, c: "#3b82f6" }, { l: "Over", v: overCount, c: "#dc2626" }].map(s => <div key={s.l}><div style={{ fontSize: 9, color: "#bbb", textTransform: "uppercase", letterSpacing: 1 }}>{s.l}</div><div style={{ fontSize: 14, fontWeight: 600, color: s.c || "#333", fontFamily: "'DM Sans', sans-serif" }}>{s.v}</div></div>)}
               </div>
             </div>
           )}
         </div>
 
         {/* Main */}
-        <div style={{ flex: 1, padding: 24, overflowY: "auto", background: "#fafafa" }}>
+        <div style={{ flex: 1, padding: sidebarOpen ? 24 : 16, overflowY: "auto", background: "#fafafa" }}>
           {tab === "monitor" ? (<>
             {error && <div style={{ padding: "12px 16px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, color: "#dc2626", fontSize: 12, marginBottom: 16, fontFamily: "'DM Sans', sans-serif" }}>{error}</div>}
             {loading && !listings.length && <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 300, gap: 16 }}><div style={{ width: 36, height: 36, border: "3px solid #e5e7eb", borderTop: "3px solid #16a34a", borderRadius: "50%", animation: "pulse 1s linear infinite" }} /><div style={{ fontSize: 12, color: "#aaa", fontFamily: "'DM Sans', sans-serif" }}>Searching eBay near {ZIP_CODE}...</div></div>}
@@ -368,37 +447,39 @@ export default function App() {
             {listings.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <div style={{ display: "flex", gap: 4, background: "#f3f4f6", borderRadius: 8, padding: 3 }}>
-                  {[{ k: "all", l: `All (${enriched.length})` }, { k: "deals", l: `Deals (${dealCount})`, c: "#16a34a" }, { k: "over", l: `Over (${overCount})`, c: "#dc2626" }].map(f => <button key={f.k} onClick={() => setFilterMode(f.k)} style={{ background: filterMode === f.k ? "#fff" : "transparent", border: "none", boxShadow: filterMode === f.k ? "0 1px 3px rgba(0,0,0,0.08)" : "none", color: filterMode === f.k ? (f.c || "#111") : "#999", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600 }}>{f.l}</button>)}
+                  {[{ k: "all", l: `All (${enriched.length})` }, { k: "deals", l: `Deals (${dealCount})`, c: "#16a34a" }, { k: "maybe", l: `Maybe (${maybeCount})`, c: "#3b82f6" }, { k: "over", l: `Over (${overCount})`, c: "#dc2626" }].map(f => <button key={f.k} onClick={() => setFilterMode(f.k)} style={{ background: filterMode === f.k ? "#fff" : "transparent", border: "none", boxShadow: filterMode === f.k ? "0 1px 3px rgba(0,0,0,0.08)" : "none", color: filterMode === f.k ? (f.c || "#111") : "#999", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600 }}>{f.l}</button>)}
                 </div>
                 {loading && <span style={{ fontSize: 11, color: "#16a34a", animation: "pulse 1s infinite" }}>● Updating...</span>}
               </div>
 
               {filtered.map((li, i) => {
-                const r = li.rule; const isDeal = r?.underBudget; const isOver = r && !r.underBudget;
-                return (<div key={li.id} style={{ background: isDeal ? "#f0fdf4" : isOver ? "#fefce8" : "#fff", border: `1px solid ${isDeal ? "#86efac" : isOver ? "#fde68a" : "#f3f4f6"}`, borderLeft: isDeal ? "4px solid #16a34a" : isOver ? "4px solid #eab308" : "4px solid transparent", borderRadius: 12, padding: 16, animation: `slideIn 0.3s ease ${i * 0.04}s both${isDeal ? ", dealPulse 2s ease 1" : ""}`, boxShadow: isDeal ? "0 2px 12px #16a34a11" : "0 1px 3px rgba(0,0,0,0.03)" }}>
+                const r = li.rule; const isDeal = r?.underBudget; const isMaybe = r?.shipUnknown && r.savings > 0; const isOver = r && !r.underBudget && !isMaybe;
+                return (<div key={li.id} style={{ background: isDeal ? "#f0fdf4" : isMaybe ? "#eff6ff" : isOver ? "#fefce8" : "#fff", border: `1px solid ${isDeal ? "#86efac" : isMaybe ? "#bfdbfe" : isOver ? "#fde68a" : "#f3f4f6"}`, borderLeft: isDeal ? "4px solid #16a34a" : isMaybe ? "4px solid #3b82f6" : isOver ? "4px solid #eab308" : "4px solid transparent", borderRadius: 12, padding: 16, animation: `slideIn 0.3s ease ${i * 0.04}s both${isDeal ? ", dealPulse 2s ease 1" : ""}`, boxShadow: isDeal ? "0 2px 12px #16a34a11" : isMaybe ? "0 2px 12px #3b82f611" : "0 1px 3px rgba(0,0,0,0.03)" }}>
                   <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
                     {li.image && <img src={li.image} alt="" style={{ width: 72, height: 72, borderRadius: 8, objectFit: "cover", background: "#f3f4f6", flexShrink: 0 }} />}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 500, color: "#222", lineHeight: 1.5, marginBottom: 8 }}>
                         {isDeal && <span style={{ background: "#16a34a", color: "#fff", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20, marginRight: 8, textTransform: "uppercase", letterSpacing: 1, fontFamily: "'IBM Plex Mono', monospace" }}>✓ Deal</span>}
+                        {isMaybe && <span style={{ background: "#3b82f6", color: "#fff", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20, marginRight: 8, textTransform: "uppercase", letterSpacing: 1, fontFamily: "'IBM Plex Mono', monospace" }}>? Maybe</span>}
                         {isOver && <span style={{ background: "#fbbf24", color: "#78350f", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20, marginRight: 8, textTransform: "uppercase", fontFamily: "'IBM Plex Mono', monospace" }}>Over</span>}
+                        {r?.shipUnknown && <span style={{ background: "#eff6ff", color: "#2563eb", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20, marginRight: 8, textTransform: "uppercase", fontFamily: "'IBM Plex Mono', monospace", border: "1px solid #bfdbfe" }}>⚠ Ship TBD</span>}
                         {newIds.has(li.id) && <span style={{ background: "#eff6ff", color: "#1e40af", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20, marginRight: 8, textTransform: "uppercase", fontFamily: "'IBM Plex Mono', monospace", border: "1px solid #bfdbfe" }}>New</span>}
                         {li.title}
                       </div>
                       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                         <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                          <span style={{ color: isDeal ? "#16a34a" : isOver ? "#b45309" : "#16a34a", fontSize: 20, fontWeight: 700, fontFamily: "'DM Sans', sans-serif" }}>${li.totalPrice.toFixed(2)}</span>
-                          <span style={{ fontSize: 10, color: li.shippingKnown === false ? "#f59e0b" : "#999", fontFamily: "'IBM Plex Mono', monospace" }}>
+                          <span style={{ color: isDeal ? "#16a34a" : isMaybe ? "#2563eb" : isOver ? "#b45309" : "#16a34a", fontSize: 20, fontWeight: 700, fontFamily: "'DM Sans', sans-serif" }}>${li.totalPrice.toFixed(2)}</span>
+                          <span style={{ fontSize: 10, color: li.shippingKnown === false ? "#2563eb" : "#999", fontFamily: "'IBM Plex Mono', monospace" }}>
                             {li.shippingKnown === false ? `($${li.itemPrice.toFixed(2)} + ship TBD)` : `($${li.itemPrice.toFixed(2)} + $${li.shipCost.toFixed(2)} ship)`}
                           </span>
                         </div>
-                        {r && <span style={{ fontSize: 10, fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace", color: isDeal ? "#16a34a" : "#dc2626", background: isDeal ? "#dcfce7" : "#fef2f2", padding: "3px 8px", borderRadius: 20 }}>{isDeal ? `$${r.savings.toFixed(0)} under` : `$${Math.abs(r.savings).toFixed(0)} over`}{r.qty > 1 ? ` (${r.qty}× ≤$${r.adjustedMax})` : ` (≤$${r.adjustedMax})`}</span>}
+                        {r && <span style={{ fontSize: 10, fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace", color: r.shipUnknown ? "#2563eb" : isDeal ? "#16a34a" : "#dc2626", background: r.shipUnknown ? "#eff6ff" : isDeal ? "#dcfce7" : "#fef2f2", padding: "3px 8px", borderRadius: 20 }}>{r.shipUnknown ? `$${r.savings.toFixed(0)} under + ship?` : isDeal ? `$${r.savings.toFixed(0)} under` : `$${Math.abs(r.savings).toFixed(0)} over`}{r.qty > 1 ? ` (${r.qty}× ≤$${r.adjustedMax})` : ` (≤$${r.adjustedMax})`}</span>}
                         {r?.qty > 1 && <span style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", background: "#f5f3ff", padding: "3px 8px", borderRadius: 20, border: "1px solid #ddd6fe", fontFamily: "'IBM Plex Mono', monospace" }}>{r.qty}× · ${r.perUnit?.toFixed(2)}/ea</span>}
                         {li.condition && <span style={{ fontSize: 10, color: "#777", background: "#f3f4f6", padding: "3px 8px", borderRadius: 20, fontFamily: "'DM Sans', sans-serif" }}>{li.condition}</span>}
                         {li.seller && <span style={{ fontSize: 10, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>@{li.seller}</span>}
                       </div>
                     </div>
-                    {li.url && <a href={li.url} target="_blank" rel="noopener noreferrer" style={{ background: isDeal ? "#16a34a" : "#555", border: "none", color: "#fff", padding: "10px 20px", borderRadius: 10, textDecoration: "none", fontSize: 12, fontWeight: 600, fontFamily: "'DM Sans', sans-serif", display: "flex", alignItems: "center", gap: 6, boxShadow: isDeal ? "0 2px 8px #16a34a33" : "0 2px 8px rgba(0,0,0,0.1)", flexShrink: 0 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>BUY</a>}
+                    {li.url && <a href={li.url} target="_blank" rel="noopener noreferrer" style={{ background: isDeal ? "#16a34a" : isMaybe ? "#3b82f6" : "#555", border: "none", color: "#fff", padding: "10px 20px", borderRadius: 10, textDecoration: "none", fontSize: 12, fontWeight: 600, fontFamily: "'DM Sans', sans-serif", display: "flex", alignItems: "center", gap: 6, boxShadow: isDeal ? "0 2px 8px #16a34a33" : isMaybe ? "0 2px 8px #3b82f633" : "0 2px 8px rgba(0,0,0,0.1)", flexShrink: 0 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>BUY</a>}
                   </div>
                 </div>);
               })}
