@@ -49,15 +49,28 @@ function detectQuantityAndSize(title) {
     const perStick = parseInt(nxm[2]);
     if (qty >= 1 && qty <= 100 && perStick > 0) return { qty, perStickGB: perStick };
   }
-  // Check for lot/kit/pack patterns
+  // Check for lot/kit/pack/quantity patterns
   const lotPatterns = [
-    /\bLOT\s*(?:OF\s*)?(\d+)/i, /\bKIT\s*(?:OF\s*)?(\d+)/i, /\bSET\s*(?:OF\s*)?(\d+)/i,
-    /\((\d+)\s*(?:PACK|PCS?|PIECES?|STICKS?|MODULES?|DIMMS?)\)/i,
-    /\b(\d+)\s*(?:PACK|PCS?|PIECES?|STICKS?|MODULES?|DIMMS?)\b/i,
+    /\bLOT\s*(?:OF\s*)?(\d+)/i,
+    /\bKIT\s*(?:OF\s*)?(\d+)/i,
+    /\bSET\s*(?:OF\s*)?(\d+)/i,
+    /\bBUNDLE\s*(?:OF\s*)?(\d+)/i,
+    /\((\d+)\s*(?:PACK|PCS?|PIECES?|STICKS?|MODULES?|DIMMS?|COUNT|CT)\)/i,
+    /\b(\d+)\s*(?:PACK|PCS?|PIECES?|STICKS?|MODULES?|DIMMS?|COUNT|CT)\b/i,
+    /\bQTY\s*[:.]?\s*(\d+)/i,
+    /\bQUANTITY\s*[:.]?\s*(\d+)/i,
+    /\b(\d+)\s*(?:LOT|LOTS)\b/i,
+    /\((\d+)\)/,  // bare number in parens like "(10)" if no other match
   ];
   for (const p of lotPatterns) {
     const m = t.match(p);
-    if (m) { const n = parseInt(m[1]); if (n >= 1 && n <= 100) return { qty: n, perStickGB: null }; }
+    if (m) {
+      const n = parseInt(m[1]);
+      // Skip if the number looks like a GB size or speed, not a quantity
+      if (n >= 2 && n <= 200 && ![4, 8, 16, 32, 64, 128, 2133, 2400, 2666, 3200, 4800, 5600, 6000].includes(n)) {
+        return { qty: n, perStickGB: null };
+      }
+    }
   }
   return { qty: 1, perStickGB: null };
 }
@@ -320,9 +333,10 @@ export default function App() {
   const toggleCondition = (c) => setCriteria(prev => ({ ...prev, conditions: prev.conditions.includes(c) ? prev.conditions.filter(x => x !== c) : [...prev.conditions, c] }));
 
   const enriched = listings.map(l => ({ ...l, rule: matchPriceRule(l, priceRules) }));
-  const filtered = enriched.filter(l => { if (filterMode === "deals") return l.rule?.underBudget; if (filterMode === "maybe") return l.rule?.shipUnknown && l.rule.savings > 0; if (filterMode === "over") return l.rule && !l.rule.underBudget && !(l.rule.shipUnknown && l.rule.savings > 0); return true; });
+  const filtered = enriched.filter(l => { if (filterMode === "picks") return l.rule?.underBudget || (l.rule?.shipUnknown && l.rule.savings > 0); if (filterMode === "deals") return l.rule?.underBudget; if (filterMode === "maybe") return l.rule?.shipUnknown && l.rule.savings > 0; if (filterMode === "over") return l.rule && !l.rule.underBudget && !(l.rule.shipUnknown && l.rule.savings > 0); return true; });
   const dealCount = enriched.filter(l => l.rule?.underBudget).length;
   const maybeCount = enriched.filter(l => l.rule?.shipUnknown && l.rule.savings > 0).length;
+  const picksCount = dealCount + maybeCount;
   const overCount = enriched.filter(l => l.rule && !l.rule.underBudget && !(l.rule.shipUnknown && l.rule.savings > 0)).length;
 
   return (
@@ -431,7 +445,7 @@ export default function App() {
             <div style={{ marginTop: 20, padding: 14, background: "#f9fafb", borderRadius: 10 }}>
               <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10, fontWeight: 600 }}>Session</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                {[{ l: "Scans", v: scanCount }, { l: "Results", v: listings.length }, { l: "Deals", v: dealCount, c: "#16a34a" }, { l: "Maybe", v: maybeCount, c: "#3b82f6" }, { l: "Over", v: overCount, c: "#dc2626" }].map(s => <div key={s.l}><div style={{ fontSize: 9, color: "#bbb", textTransform: "uppercase", letterSpacing: 1 }}>{s.l}</div><div style={{ fontSize: 14, fontWeight: 600, color: s.c || "#333", fontFamily: "'DM Sans', sans-serif" }}>{s.v}</div></div>)}
+                {[{ l: "Scans", v: scanCount }, { l: "Results", v: listings.length }, { l: "Picks", v: picksCount, c: "#7c3aed" }, { l: "Deals", v: dealCount, c: "#16a34a" }, { l: "Maybe", v: maybeCount, c: "#3b82f6" }, { l: "Over", v: overCount, c: "#dc2626" }].map(s => <div key={s.l}><div style={{ fontSize: 9, color: "#bbb", textTransform: "uppercase", letterSpacing: 1 }}>{s.l}</div><div style={{ fontSize: 14, fontWeight: 600, color: s.c || "#333", fontFamily: "'DM Sans', sans-serif" }}>{s.v}</div></div>)}
               </div>
             </div>
           )}
@@ -447,7 +461,7 @@ export default function App() {
             {listings.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <div style={{ display: "flex", gap: 4, background: "#f3f4f6", borderRadius: 8, padding: 3 }}>
-                  {[{ k: "all", l: `All (${enriched.length})` }, { k: "deals", l: `Deals (${dealCount})`, c: "#16a34a" }, { k: "maybe", l: `Maybe (${maybeCount})`, c: "#3b82f6" }, { k: "over", l: `Over (${overCount})`, c: "#dc2626" }].map(f => <button key={f.k} onClick={() => setFilterMode(f.k)} style={{ background: filterMode === f.k ? "#fff" : "transparent", border: "none", boxShadow: filterMode === f.k ? "0 1px 3px rgba(0,0,0,0.08)" : "none", color: filterMode === f.k ? (f.c || "#111") : "#999", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600 }}>{f.l}</button>)}
+                  {[{ k: "all", l: `All (${enriched.length})` }, { k: "picks", l: `Picks (${picksCount})`, c: "#7c3aed" }, { k: "deals", l: `Deals (${dealCount})`, c: "#16a34a" }, { k: "maybe", l: `Maybe (${maybeCount})`, c: "#3b82f6" }, { k: "over", l: `Over (${overCount})`, c: "#dc2626" }].map(f => <button key={f.k} onClick={() => setFilterMode(f.k)} style={{ background: filterMode === f.k ? "#fff" : "transparent", border: "none", boxShadow: filterMode === f.k ? "0 1px 3px rgba(0,0,0,0.08)" : "none", color: filterMode === f.k ? (f.c || "#111") : "#999", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600 }}>{f.l}</button>)}
                 </div>
                 {loading && <span style={{ fontSize: 11, color: "#16a34a", animation: "pulse 1s infinite" }}>● Updating...</span>}
               </div>
@@ -473,7 +487,7 @@ export default function App() {
                             {li.shippingKnown === false ? `($${li.itemPrice.toFixed(2)} + ship TBD)` : `($${li.itemPrice.toFixed(2)} + $${li.shipCost.toFixed(2)} ship)`}
                           </span>
                         </div>
-                        {r && <span style={{ fontSize: 10, fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace", color: r.shipUnknown ? "#2563eb" : isDeal ? "#16a34a" : "#dc2626", background: r.shipUnknown ? "#eff6ff" : isDeal ? "#dcfce7" : "#fef2f2", padding: "3px 8px", borderRadius: 20 }}>{r.shipUnknown ? `$${r.savings.toFixed(0)} under + ship?` : isDeal ? `$${r.savings.toFixed(0)} under` : `$${Math.abs(r.savings).toFixed(0)} over`}{r.qty > 1 ? ` (${r.qty}× ≤$${r.adjustedMax})` : ` (≤$${r.adjustedMax})`}</span>}
+                        {r && <span style={{ fontSize: 10, fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace", color: r.shipUnknown && r.savings > 0 ? "#2563eb" : r.savings > 0 ? "#16a34a" : "#dc2626", background: r.shipUnknown && r.savings > 0 ? "#eff6ff" : r.savings > 0 ? "#dcfce7" : "#fef2f2", padding: "3px 8px", borderRadius: 20 }}>{r.savings >= 0 ? `$${r.savings.toFixed(0)} under` : `$${Math.abs(r.savings).toFixed(0)} over`}{r.shipUnknown ? " + ship?" : ""}{r.qty > 1 ? ` (${r.qty}× ≤$${r.adjustedMax})` : ` (≤$${r.adjustedMax})`}</span>}
                         {r?.qty > 1 && <span style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", background: "#f5f3ff", padding: "3px 8px", borderRadius: 20, border: "1px solid #ddd6fe", fontFamily: "'IBM Plex Mono', monospace" }}>{r.qty}× · ${r.perUnit?.toFixed(2)}/ea</span>}
                         {li.condition && <span style={{ fontSize: 10, color: "#777", background: "#f3f4f6", padding: "3px 8px", borderRadius: 20, fontFamily: "'DM Sans', sans-serif" }}>{li.condition}</span>}
                         {li.seller && <span style={{ fontSize: 10, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>@{li.seller}</span>}
