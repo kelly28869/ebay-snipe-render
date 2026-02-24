@@ -431,9 +431,9 @@ export default function App() {
 
           <label style={{ ...lbl, marginTop: 24 }}>Scan Interval (seconds)</label>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input type="number" min="5" max="3600" value={scanInterval} onChange={e => setScanInterval(Math.max(5, Math.min(3600, parseInt(e.target.value) || 5)))} style={{ ...inp, width: 90, textAlign: "center", fontWeight: 600 }} />
+            <input type="number" min="3" max="3600" value={scanInterval} onChange={e => setScanInterval(Math.max(3, Math.min(3600, parseInt(e.target.value) || 3)))} style={{ ...inp, width: 90, textAlign: "center", fontWeight: 600 }} />
             <span style={{ fontSize: 11, color: "#999" }}>{scanInterval < 60 ? `${scanInterval}s` : `${(scanInterval / 60).toFixed(1)}m`}</span>
-            <div style={{ display: "flex", gap: 3, marginLeft: "auto" }}>{[5, 6, 7, 8, 9, 10].map(v => <button key={v} onClick={() => setScanInterval(v)} style={{ background: scanInterval === v ? "#f0fdf4" : "#f9fafb", border: `1px solid ${scanInterval === v ? "#86efac" : "#e5e7eb"}`, color: scanInterval === v ? "#166534" : "#aaa", padding: "3px 6px", borderRadius: 4, cursor: "pointer", fontSize: 10, fontFamily: "inherit" }}>{v}s</button>)}</div>
+            <div style={{ display: "flex", gap: 3, marginLeft: "auto" }}>{[3, 4, 5, 6].map(v => <button key={v} onClick={() => setScanInterval(v)} style={{ background: scanInterval === v ? "#f0fdf4" : "#f9fafb", border: `1px solid ${scanInterval === v ? "#86efac" : "#e5e7eb"}`, color: scanInterval === v ? "#166534" : "#aaa", padding: "3px 6px", borderRadius: 4, cursor: "pointer", fontSize: 10, fontFamily: "inherit" }}>{v}s</button>)}</div>
           </div>
 
           <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 8 }}>
