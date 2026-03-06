@@ -12,7 +12,7 @@ const SORT_OPTIONS = [
 ];
 
 const PRESET_CATEGORIES = [
-  { label: "Type", keywords: ["DDR4", "PC4", "DDR5", "PC5"] },
+  { label: "Type", keywords: ["DDR4", "PC4", "DDR5", "PC5", "ECC", "Server"] },
   { label: "Size", keywords: ["4GB", "8GB", "16GB", "32GB"] },
   { label: "Brand", keywords: ["Samsung", "Hynix", "Micron", "Kingston", "Crucial", "Mixed Lot"] },
   { label: "Speed", keywords: ["3200", "2666", "2400", "2133"] },
@@ -21,18 +21,20 @@ const ALL_PRESETS = PRESET_CATEGORIES.flatMap(c => c.keywords);
 
 const DEFAULT_PRICE_RULES = [
   { type: "DDR4", size: "4GB", speed: "All", maxPrice: 10 },
-  { type: "DDR4", size: "8GB", speed: "2133", maxPrice: 25 },
+  { type: "DDR4", size: "8GB", speed: "2133", maxPrice: 27 },
   { type: "DDR4", size: "8GB", speed: "2400", maxPrice: 27 },
-  { type: "DDR4", size: "8GB", speed: "2666", maxPrice: 30 },
-  { type: "DDR4", size: "8GB", speed: "3200", maxPrice: 30 },
-  { type: "DDR4", size: "16GB", speed: "2133", maxPrice: 48 },
-  { type: "DDR4", size: "16GB", speed: "2400", maxPrice: 52 },
-  { type: "DDR4", size: "16GB", speed: "2666", maxPrice: 60 },
-  { type: "DDR4", size: "16GB", speed: "3200", maxPrice: 60 },
+  { type: "DDR4", size: "8GB", speed: "2666", maxPrice: 32 },
+  { type: "DDR4", size: "8GB", speed: "3200", maxPrice: 34 },
+  { type: "DDR4", size: "16GB", speed: "2133", maxPrice: 50 },
+  { type: "DDR4", size: "16GB", speed: "2400", maxPrice: 61 },
+  { type: "DDR4", size: "16GB", speed: "2666", maxPrice: 65 },
+  { type: "DDR4", size: "16GB", speed: "3200", maxPrice: 66 },
   { type: "DDR4", size: "32GB", speed: "2666", maxPrice: 110 },
   { type: "DDR4", size: "32GB", speed: "3200", maxPrice: 120 },
-  { type: "DDR5", size: "8GB", speed: "All", maxPrice: 50 },
-  { type: "DDR5", size: "16GB", speed: "All", maxPrice: 90 },
+  { type: "SERVER", size: "32GB", speed: "2666", maxPrice: 150 },
+  { type: "SERVER", size: "32GB", speed: "3200", maxPrice: 150 },
+  { type: "DDR5", size: "8GB", speed: "All", maxPrice: 54 },
+  { type: "DDR5", size: "16GB", speed: "All", maxPrice: 100 },
   { type: "DDR5", size: "32GB", speed: "All", maxPrice: 210 },
 ];
 
@@ -84,7 +86,8 @@ function matchPriceRule(listing, rules) {
   let bestSpec = -1;
 
   for (const rule of rules) {
-    const typeOk = t.includes(rule.type) || (rule.type === "DDR4" && t.includes("PC4")) || (rule.type === "DDR5" && t.includes("PC5"));
+    const isServerRAM = t.includes("ECC") || t.includes("RDIMM") || t.includes("LRDIMM") || t.includes("REG ") || t.includes("REGISTERED") || t.includes("SERVER");
+    const typeOk = (rule.type === "SERVER" && isServerRAM && (t.includes("DDR4") || t.includes("PC4"))) || (rule.type !== "SERVER" && !isServerRAM && (t.includes(rule.type) || (rule.type === "DDR4" && t.includes("PC4")) || (rule.type === "DDR5" && t.includes("PC5"))));
     if (!typeOk) continue;
 
     const ruleSizeNum = parseInt(rule.size.replace("GB", ""));
