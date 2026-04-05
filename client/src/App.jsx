@@ -36,22 +36,28 @@ const DEFAULT_CRITERIA = { keywords: [], minPrice: "", maxPrice: "", conditions:
 
 function detectQuantityAndSize(title) {
   const t = title.toUpperCase();
-  // Look for explicit NxM GB patterns first — this is the per-stick size
   const nxm = t.match(/(\d+)\s*[Xx]\s*(\d+)\s*GB/);
   if (nxm) {
     const qty = parseInt(nxm[1]);
     const perStick = parseInt(nxm[2]);
     if (qty >= 1 && qty <= 100 && perStick > 0) return { qty, perStickGB: perStick };
   }
-  // Check for lot/kit/pack patterns
   const lotPatterns = [
     /\bLOT\s*(?:OF\s*)?(\d+)/i, /\bKIT\s*(?:OF\s*)?(\d+)/i, /\bSET\s*(?:OF\s*)?(\d+)/i,
-    /\((\d+)\s*(?:PACK|PCS?|PIECES?|STICKS?|MODULES?|DIMMS?)\)/i,
-    /\b(\d+)\s*(?:PACK|PCS?|PIECES?|STICKS?|MODULES?|DIMMS?)\b/i,
+    /\bBUNDLE\s*(?:OF\s*)?(\d+)/i,
+    /\((\d+)\s*(?:PACK|PCS?|PIECES?|STICKS?|MODULES?|DIMMS?|COUNT|CT)\)/i,
+    /\b(\d+)\s*(?:PACK|PCS?|PIECES?|STICKS?|MODULES?|DIMMS?|COUNT|CT)\b/i,
+    /\bQTY\s*[:.]?\s*(\d+)/i, /\bQUANTITY\s*[:.]?\s*(\d+)/i,
+    /\b(\d+)\s*(?:LOT|LOTS)\b/i,
   ];
   for (const p of lotPatterns) {
     const m = t.match(p);
-    if (m) { const n = parseInt(m[1]); if (n >= 1 && n <= 100) return { qty: n, perStickGB: null }; }
+    if (m) {
+      const n = parseInt(m[1]);
+      if (n >= 2 && n <= 200 && ![4, 8, 16, 32, 64, 128, 2133, 2400, 2666, 3200, 4800, 5600, 6000].includes(n)) {
+        return { qty: n, perStickGB: null };
+      }
+    }
   }
   return { qty: 1, perStickGB: null };
 }
@@ -185,11 +191,38 @@ export default function App() {
   const [countdown, setCountdown] = useState(null);
   const [filterMode, setFilterMode] = useState("all");
   const [apiStats, setApiStats] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 768);
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  useEffect(() => {
+    const onResize = () => { const m = window.innerWidth <= 768; setIsMobile(m); if (!m && !sidebarOpen) setSidebarOpen(true); };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [sidebarOpen]);
   const intervalRef = useRef(null);
   const countdownRef = useRef(null);
+  const audioCtxRef = useRef(null);
+
+  const unlockAudio = useCallback(() => {
+    if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtxRef.current.state === "suspended") audioCtxRef.current.resume();
+    const buf = audioCtxRef.current.createBuffer(1, 1, 22050);
+    const src = audioCtxRef.current.createBufferSource();
+    src.buffer = buf; src.connect(audioCtxRef.current.destination); src.start(0);
+  }, []);
 
   const playNotification = useCallback(() => {
-    try { const ctx = new AudioContext(); const o = ctx.createOscillator(); const g = ctx.createGain(); o.connect(g); g.connect(ctx.destination); o.frequency.setValueAtTime(880, ctx.currentTime); o.frequency.setValueAtTime(1320, ctx.currentTime + 0.15); g.gain.setValueAtTime(0.15, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3); o.start(); o.stop(ctx.currentTime + 0.3); } catch (e) {}
+    try {
+      const ctx = audioCtxRef.current;
+      if (!ctx) return;
+      if (ctx.state === "suspended") ctx.resume();
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.setValueAtTime(880, ctx.currentTime);
+      o.frequency.setValueAtTime(1320, ctx.currentTime + 0.15);
+      g.gain.setValueAtTime(0.3, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+      o.start(); o.stop(ctx.currentTime + 0.4);
+    } catch (e) {}
   }, []);
 
   // Client-side keyword filter: listing title must contain ANY selected keyword
@@ -258,12 +291,13 @@ export default function App() {
   const toggleScanning = useCallback(() => {
     if (scanning) { clearInterval(intervalRef.current); clearInterval(countdownRef.current); setScanning(false); setCountdown(null); }
     else {
+      unlockAudio();
       setScanning(true); runScan();
       intervalRef.current = setInterval(runScan, scanInterval * 1000);
       countdownRef.current = setInterval(() => setCountdown(c => c > 0 ? c - 1 : scanInterval), 1000);
       if (Notification.permission === "default") Notification.requestPermission();
     }
-  }, [scanning, scanInterval, runScan]);
+  }, [scanning, scanInterval, runScan, unlockAudio]);
 
   useEffect(() => () => { clearInterval(intervalRef.current); clearInterval(countdownRef.current); }, []);
   useEffect(() => { if (scanning) { clearInterval(intervalRef.current); intervalRef.current = setInterval(runScan, scanInterval * 1000); setCountdown(scanInterval); } }, [scanInterval]);
@@ -278,9 +312,10 @@ export default function App() {
   const toggleCondition = (c) => setCriteria(prev => ({ ...prev, conditions: prev.conditions.includes(c) ? prev.conditions.filter(x => x !== c) : [...prev.conditions, c] }));
 
   const enriched = listings.map(l => ({ ...l, rule: matchPriceRule(l, priceRules) }));
-  const filtered = enriched.filter(l => { if (filterMode === "deals") return l.rule?.underBudget; if (filterMode === "maybe") return l.rule?.shipUnknown && l.rule.savings > 0; if (filterMode === "over") return l.rule && !l.rule.underBudget && !(l.rule.shipUnknown && l.rule.savings > 0); return true; });
+  const filtered = enriched.filter(l => { if (filterMode === "picks") return l.rule?.underBudget || (l.rule?.shipUnknown && l.rule.savings > 0); if (filterMode === "deals") return l.rule?.underBudget; if (filterMode === "maybe") return l.rule?.shipUnknown && l.rule.savings > 0; if (filterMode === "over") return l.rule && !l.rule.underBudget && !(l.rule.shipUnknown && l.rule.savings > 0); return true; });
   const dealCount = enriched.filter(l => l.rule?.underBudget).length;
   const maybeCount = enriched.filter(l => l.rule?.shipUnknown && l.rule.savings > 0).length;
+  const picksCount = dealCount + maybeCount;
   const overCount = enriched.filter(l => l.rule && !l.rule.underBudget && !(l.rule.shipUnknown && l.rule.savings > 0)).length;
 
   return (
@@ -311,9 +346,15 @@ export default function App() {
         </div>
       </div>
 
-      <div style={{ display: "flex", minHeight: "calc(100vh - 57px)" }}>
+      <div style={{ display: "flex", minHeight: "calc(100vh - 57px)", position: "relative" }}>
+        {/* Sidebar Toggle */}
+        <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ position: "fixed", bottom: 20, left: sidebarOpen && !isMobile ? 370 : 10, zIndex: 100, background: sidebarOpen ? "#dc2626" : "#16a34a", color: "#fff", border: "none", width: 44, height: 44, borderRadius: 22, cursor: "pointer", boxShadow: "0 2px 12px rgba(0,0,0,0.25)", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", transition: "left 0.3s, background 0.3s" }}>{sidebarOpen ? "✕" : "☰"}</button>
+
+        {/* Sidebar Overlay (mobile) */}
+        {sidebarOpen && isMobile && <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 49 }} />}
+
         {/* Sidebar */}
-        <div style={{ width: 360, borderRight: "1px solid #e5e7eb", padding: 20, background: "#fff", flexShrink: 0, overflowY: "auto" }}>
+        <div style={{ width: sidebarOpen ? 360 : 0, minWidth: sidebarOpen ? 360 : 0, maxWidth: sidebarOpen ? "90vw" : 0, borderRight: sidebarOpen ? "1px solid #e5e7eb" : "none", padding: sidebarOpen ? 20 : 0, background: "#fff", flexShrink: 0, overflowY: "auto", overflowX: "hidden", transition: "all 0.3s", opacity: sidebarOpen ? 1 : 0, position: isMobile ? "fixed" : "relative", top: isMobile ? 57 : "auto", left: 0, bottom: 0, zIndex: isMobile ? 50 : "auto" }}>
           {apiStats && (
             <div style={{ marginBottom: 16, padding: 14, background: apiStats.remaining < 500 ? "#fef2f2" : apiStats.remaining < 1500 ? "#fefce8" : "#f0fdf4", borderRadius: 10, border: `1px solid ${apiStats.remaining < 500 ? "#fecaca" : apiStats.remaining < 1500 ? "#fde68a" : "#bbf7d0"}` }}>
               <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8, fontWeight: 600 }}>eBay API Usage</div>
@@ -369,9 +410,9 @@ export default function App() {
 
           <label style={{ ...lbl, marginTop: 24 }}>Scan Interval (seconds)</label>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input type="number" min="5" max="3600" value={scanInterval} onChange={e => setScanInterval(Math.max(5, Math.min(3600, parseInt(e.target.value) || 5)))} style={{ ...inp, width: 90, textAlign: "center", fontWeight: 600 }} />
+            <input type="number" min="3" max="3600" value={scanInterval} onChange={e => setScanInterval(Math.max(3, Math.min(3600, parseInt(e.target.value) || 3)))} style={{ ...inp, width: 90, textAlign: "center", fontWeight: 600 }} />
             <span style={{ fontSize: 11, color: "#999" }}>{scanInterval < 60 ? `${scanInterval}s` : `${(scanInterval / 60).toFixed(1)}m`}</span>
-            <div style={{ display: "flex", gap: 3, marginLeft: "auto" }}>{[5, 6, 7, 8, 9, 10].map(v => <button key={v} onClick={() => setScanInterval(v)} style={{ background: scanInterval === v ? "#f0fdf4" : "#f9fafb", border: `1px solid ${scanInterval === v ? "#86efac" : "#e5e7eb"}`, color: scanInterval === v ? "#166534" : "#aaa", padding: "3px 6px", borderRadius: 4, cursor: "pointer", fontSize: 10, fontFamily: "inherit" }}>{v}s</button>)}</div>
+            <div style={{ display: "flex", gap: 3, marginLeft: "auto" }}>{[3, 4, 5, 6].map(v => <button key={v} onClick={() => setScanInterval(v)} style={{ background: scanInterval === v ? "#f0fdf4" : "#f9fafb", border: `1px solid ${scanInterval === v ? "#86efac" : "#e5e7eb"}`, color: scanInterval === v ? "#166534" : "#aaa", padding: "3px 6px", borderRadius: 4, cursor: "pointer", fontSize: 10, fontFamily: "inherit" }}>{v}s</button>)}</div>
           </div>
 
           <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -383,14 +424,14 @@ export default function App() {
             <div style={{ marginTop: 20, padding: 14, background: "#f9fafb", borderRadius: 10 }}>
               <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10, fontWeight: 600 }}>Session</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                {[{ l: "Scans", v: scanCount }, { l: "Results", v: listings.length }, { l: "Deals", v: dealCount, c: "#16a34a" }, { l: "Maybe", v: maybeCount, c: "#3b82f6" }, { l: "Over", v: overCount, c: "#dc2626" }].map(s => <div key={s.l}><div style={{ fontSize: 9, color: "#bbb", textTransform: "uppercase", letterSpacing: 1 }}>{s.l}</div><div style={{ fontSize: 14, fontWeight: 600, color: s.c || "#333", fontFamily: "'DM Sans', sans-serif" }}>{s.v}</div></div>)}
+                {[{ l: "Scans", v: scanCount }, { l: "Results", v: listings.length }, { l: "Picks", v: picksCount, c: "#7c3aed" }, { l: "Deals", v: dealCount, c: "#16a34a" }, { l: "Maybe", v: maybeCount, c: "#3b82f6" }, { l: "Over", v: overCount, c: "#dc2626" }].map(s => <div key={s.l}><div style={{ fontSize: 9, color: "#bbb", textTransform: "uppercase", letterSpacing: 1 }}>{s.l}</div><div style={{ fontSize: 14, fontWeight: 600, color: s.c || "#333", fontFamily: "'DM Sans', sans-serif" }}>{s.v}</div></div>)}
               </div>
             </div>
           )}
         </div>
 
         {/* Main */}
-        <div style={{ flex: 1, padding: 24, overflowY: "auto", background: "#fafafa" }}>
+        <div style={{ flex: 1, padding: sidebarOpen ? 24 : 16, overflowY: "auto", background: "#fafafa" }}>
           {tab === "monitor" ? (<>
             {error && <div style={{ padding: "12px 16px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, color: "#dc2626", fontSize: 12, marginBottom: 16, fontFamily: "'DM Sans', sans-serif" }}>{error}</div>}
             {loading && !listings.length && <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 300, gap: 16 }}><div style={{ width: 36, height: 36, border: "3px solid #e5e7eb", borderTop: "3px solid #16a34a", borderRadius: "50%", animation: "pulse 1s linear infinite" }} /><div style={{ fontSize: 12, color: "#aaa", fontFamily: "'DM Sans', sans-serif" }}>Searching eBay near {ZIP_CODE}...</div></div>}
@@ -399,7 +440,7 @@ export default function App() {
             {listings.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <div style={{ display: "flex", gap: 4, background: "#f3f4f6", borderRadius: 8, padding: 3 }}>
-                  {[{ k: "all", l: `All (${enriched.length})` }, { k: "deals", l: `Deals (${dealCount})`, c: "#16a34a" }, { k: "maybe", l: `Maybe (${maybeCount})`, c: "#3b82f6" }, { k: "over", l: `Over (${overCount})`, c: "#dc2626" }].map(f => <button key={f.k} onClick={() => setFilterMode(f.k)} style={{ background: filterMode === f.k ? "#fff" : "transparent", border: "none", boxShadow: filterMode === f.k ? "0 1px 3px rgba(0,0,0,0.08)" : "none", color: filterMode === f.k ? (f.c || "#111") : "#999", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600 }}>{f.l}</button>)}
+                  {[{ k: "all", l: `All (${enriched.length})` }, { k: "picks", l: `Picks (${picksCount})`, c: "#7c3aed" }, { k: "deals", l: `Deals (${dealCount})`, c: "#16a34a" }, { k: "maybe", l: `Maybe (${maybeCount})`, c: "#3b82f6" }, { k: "over", l: `Over (${overCount})`, c: "#dc2626" }].map(f => <button key={f.k} onClick={() => setFilterMode(f.k)} style={{ background: filterMode === f.k ? "#fff" : "transparent", border: "none", boxShadow: filterMode === f.k ? "0 1px 3px rgba(0,0,0,0.08)" : "none", color: filterMode === f.k ? (f.c || "#111") : "#999", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600 }}>{f.l}</button>)}
                 </div>
                 {loading && <span style={{ fontSize: 11, color: "#16a34a", animation: "pulse 1s infinite" }}>● Updating...</span>}
               </div>
@@ -425,7 +466,7 @@ export default function App() {
                             {li.shippingKnown === false ? `($${li.itemPrice.toFixed(2)} + ship TBD)` : `($${li.itemPrice.toFixed(2)} + $${li.shipCost.toFixed(2)} ship)`}
                           </span>
                         </div>
-                        {r && <span style={{ fontSize: 10, fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace", color: r.shipUnknown ? "#2563eb" : isDeal ? "#16a34a" : "#dc2626", background: r.shipUnknown ? "#eff6ff" : isDeal ? "#dcfce7" : "#fef2f2", padding: "3px 8px", borderRadius: 20 }}>{r.shipUnknown ? `$${r.savings.toFixed(0)} under + ship?` : isDeal ? `$${r.savings.toFixed(0)} under` : `$${Math.abs(r.savings).toFixed(0)} over`}{r.qty > 1 ? ` (${r.qty}× ≤$${r.adjustedMax})` : ` (≤$${r.adjustedMax})`}</span>}
+                        {r && <span style={{ fontSize: 10, fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace", color: r.shipUnknown && r.savings > 0 ? "#2563eb" : r.savings >= 0 ? "#16a34a" : "#dc2626", background: r.shipUnknown && r.savings > 0 ? "#eff6ff" : r.savings >= 0 ? "#dcfce7" : "#fef2f2", padding: "3px 8px", borderRadius: 20 }}>{r.savings >= 0 ? `$${r.savings.toFixed(0)} under` : `$${Math.abs(r.savings).toFixed(0)} over`}{r.shipUnknown ? " + ship?" : ""}{r.qty > 1 ? ` (${r.qty}× ≤$${r.adjustedMax})` : ` (≤$${r.adjustedMax})`}</span>}
                         {r?.qty > 1 && <span style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", background: "#f5f3ff", padding: "3px 8px", borderRadius: 20, border: "1px solid #ddd6fe", fontFamily: "'IBM Plex Mono', monospace" }}>{r.qty}× · ${r.perUnit?.toFixed(2)}/ea</span>}
                         {li.condition && <span style={{ fontSize: 10, color: "#777", background: "#f3f4f6", padding: "3px 8px", borderRadius: 20, fontFamily: "'DM Sans', sans-serif" }}>{li.condition}</span>}
                         {li.seller && <span style={{ fontSize: 10, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>@{li.seller}</span>}
