@@ -25,8 +25,8 @@ const DEFAULT_PRICE_RULES = [
   { type: "DDR4", size: "16GB", speed: "All", maxPrice: 40 },
   { type: "DDR4", size: "32GB", speed: "2666", maxPrice: 110 },
   { type: "DDR4", size: "32GB", speed: "3200", maxPrice: 120 },
-  { type: "DDR5", size: "8GB", speed: "All", maxPrice: 50 },
-  { type: "DDR5", size: "16GB", speed: "All", maxPrice: 90 },
+  { type: "DDR5", size: "8GB", speed: "All", maxPrice: 35 },
+  { type: "DDR5", size: "16GB", speed: "All", maxPrice: 60 },
   { type: "DDR5", size: "32GB", speed: "All", maxPrice: 210 },
 ];
 
