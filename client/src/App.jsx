@@ -20,14 +20,22 @@ const PRESET_CATEGORIES = [
 const ALL_PRESETS = PRESET_CATEGORIES.flatMap(c => c.keywords);
 
 const DEFAULT_PRICE_RULES = [
-  { type: "DDR4", size: "4GB", speed: "All", maxPrice: 10 },
-  { type: "DDR4", size: "8GB", speed: "All", maxPrice: 20 },
-  { type: "DDR4", size: "16GB", speed: "All", maxPrice: 40 },
-  { type: "DDR4", size: "32GB", speed: "2666", maxPrice: 110 },
-  { type: "DDR4", size: "32GB", speed: "3200", maxPrice: 120 },
-  { type: "DDR5", size: "8GB", speed: "All", maxPrice: 35 },
-  { type: "DDR5", size: "16GB", speed: "All", maxPrice: 60 },
-  { type: "DDR5", size: "32GB", speed: "All", maxPrice: 210 },
+  { type: "DDR4", size: "4GB", speed: "All", rank: "All", maxPrice: 7 },
+  { type: "DDR4", size: "8GB", speed: "2133", rank: "All", maxPrice: 14 },
+  { type: "DDR4", size: "8GB", speed: "2400", rank: "All", maxPrice: 17 },
+  { type: "DDR4", size: "8GB", speed: "2666", rank: "All", maxPrice: 21 },
+  { type: "DDR4", size: "8GB", speed: "3200", rank: "1RX16", maxPrice: 18 },
+  { type: "DDR4", size: "8GB", speed: "3200", rank: "1RX8", maxPrice: 21 },
+  { type: "DDR4", size: "16GB", speed: "2133", rank: "All", maxPrice: 30 },
+  { type: "DDR4", size: "16GB", speed: "2400", rank: "All", maxPrice: 32 },
+  { type: "DDR4", size: "16GB", speed: "2666", rank: "All", maxPrice: 38 },
+  { type: "DDR4", size: "16GB", speed: "3200", rank: "2RX8", maxPrice: 38 },
+  { type: "DDR4", size: "16GB", speed: "3200", rank: "1RX8", maxPrice: 40 },
+  { type: "DDR4", size: "32GB", speed: "2666", rank: "All", maxPrice: 110 },
+  { type: "DDR4", size: "32GB", speed: "3200", rank: "All", maxPrice: 120 },
+  { type: "DDR5", size: "8GB", speed: "All", rank: "All", maxPrice: 45 },
+  { type: "DDR5", size: "16GB", speed: "All", rank: "All", maxPrice: 120 },
+  { type: "DDR5", size: "32GB", speed: "All", rank: "All", maxPrice: 220 },
 ];
 
 const EXCLUDED_BRANDS = ["GSKILL", "G.SKILL", "TIMETEC", "CORSAIR", "ELPIDA"];
@@ -70,14 +78,15 @@ function matchPriceRule(listing, rules) {
   let bestMatch = null;
   let bestSpec = -1;
 
+  // Detect rank from title
+  const detectedRank = t.includes("1RX16") ? "1RX16" : t.includes("2RX8") ? "2RX8" : t.includes("1RX8") ? "1RX8" : t.includes("2RX16") ? "2RX16" : null;
+
   for (const rule of rules) {
     const typeOk = t.includes(rule.type) || (rule.type === "DDR4" && t.includes("PC4")) || (rule.type === "DDR5" && t.includes("PC5"));
     if (!typeOk) continue;
 
     const ruleSizeNum = parseInt(rule.size.replace("GB", ""));
 
-    // If we detected per-stick size (e.g. 2x16GB → 16), match against that
-    // Otherwise fall back to finding any size mention in the title
     let sizeMatch = false;
     if (perStickGB !== null) {
       sizeMatch = (perStickGB === ruleSizeNum);
@@ -89,7 +98,14 @@ function matchPriceRule(listing, rules) {
     let speedOk = rule.speed === "All";
     if (!speedOk) speedOk = t.includes(rule.speed);
     if (!speedOk) continue;
-    const spec = (rule.speed === "All" ? 0 : 1) + 2;
+
+    // Rank matching: specific rank > "All"
+    let rankOk = rule.rank === "All";
+    if (!rankOk) rankOk = detectedRank === rule.rank;
+    if (!rankOk) continue;
+
+    // Specificity: rank-specific (3) > speed-specific (2) > speed All (1) > base (0)
+    const spec = (rule.speed === "All" ? 0 : 1) + (rule.rank === "All" ? 0 : 2);
     if (spec > bestSpec) {
       bestSpec = spec;
       const adj = rule.maxPrice * qty;
@@ -158,11 +174,11 @@ function PriceRulesTable({ rules, setRules }) {
       {show && (
         <div style={{ background: "#f9fafb", borderRadius: 10, border: "1px solid #f3f4f6", overflow: "hidden" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace" }}>
-            <thead><tr style={{ background: "#f3f4f6" }}><th style={thS}>Type</th><th style={thS}>Size</th><th style={thS}>Speed</th><th style={{ ...thS, textAlign: "right" }}>Max $/ea</th></tr></thead>
+            <thead><tr style={{ background: "#f3f4f6" }}><th style={thS}>Type</th><th style={thS}>Size</th><th style={thS}>Speed</th><th style={thS}>Rank</th><th style={{ ...thS, textAlign: "right" }}>Max $/ea</th></tr></thead>
             <tbody>{Object.entries(grouped).map(([type, items]) => items.map((r, j) => (
               <tr key={r.idx} style={{ borderTop: j === 0 && type !== "DDR4" ? "2px solid #e5e7eb" : "1px solid #f0f0f0" }}>
                 {j === 0 && <td style={{ ...tdS, fontWeight: 700, color: type === "DDR5" ? "#7c3aed" : "#1e40af" }} rowSpan={items.length}>{type}</td>}
-                <td style={tdS}>{r.size}</td><td style={{ ...tdS, color: r.speed === "All" ? "#999" : "#555" }}>{r.speed === "All" ? "Any" : r.speed}</td>
+                <td style={tdS}>{r.size}</td><td style={{ ...tdS, color: r.speed === "All" ? "#999" : "#555" }}>{r.speed === "All" ? "Any" : r.speed}</td><td style={{ ...tdS, color: r.rank === "All" ? "#999" : "#555" }}>{r.rank === "All" ? "Any" : r.rank}</td>
                 <td style={{ ...tdS, textAlign: "right" }}>{editIdx === r.idx ? <input type="number" value={editVal} autoFocus onChange={e => setEditVal(e.target.value)} onBlur={() => { const v = parseFloat(editVal); if (!isNaN(v) && v > 0) { const nr = [...rules]; nr[r.idx] = { ...nr[r.idx], maxPrice: v }; setRules(nr); } setEditIdx(null); }} onKeyDown={e => { if (e.key === "Enter") e.target.blur(); }} style={{ width: 50, border: "1px solid #16a34a", borderRadius: 4, padding: "2px 4px", fontSize: 11, textAlign: "right", fontFamily: "inherit", outline: "none" }} /> : <span onClick={() => { setEditIdx(r.idx); setEditVal(String(r.maxPrice)); }} style={{ cursor: "pointer", color: "#16a34a", fontWeight: 700, borderBottom: "1px dashed #16a34a44" }}>${r.maxPrice}</span>}</td>
               </tr>)))}</tbody>
           </table>
@@ -212,8 +228,7 @@ export default function App() {
 
   const playNotification = useCallback(() => {
     try {
-      const ctx = audioCtxRef.current;
-      if (!ctx) return;
+      const ctx = audioCtxRef.current; if (!ctx) return;
       if (ctx.state === "suspended") ctx.resume();
       const o = ctx.createOscillator(); const g = ctx.createGain();
       o.connect(g); g.connect(ctx.destination);
@@ -347,13 +362,8 @@ export default function App() {
       </div>
 
       <div style={{ display: "flex", minHeight: "calc(100vh - 57px)", position: "relative" }}>
-        {/* Sidebar Toggle */}
         <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ position: "fixed", bottom: 20, left: sidebarOpen && !isMobile ? 370 : 10, zIndex: 100, background: sidebarOpen ? "#dc2626" : "#16a34a", color: "#fff", border: "none", width: 44, height: 44, borderRadius: 22, cursor: "pointer", boxShadow: "0 2px 12px rgba(0,0,0,0.25)", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", transition: "left 0.3s, background 0.3s" }}>{sidebarOpen ? "✕" : "☰"}</button>
-
-        {/* Sidebar Overlay (mobile) */}
         {sidebarOpen && isMobile && <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 49 }} />}
-
-        {/* Sidebar */}
         <div style={{ width: sidebarOpen ? 360 : 0, minWidth: sidebarOpen ? 360 : 0, maxWidth: sidebarOpen ? "90vw" : 0, borderRight: sidebarOpen ? "1px solid #e5e7eb" : "none", padding: sidebarOpen ? 20 : 0, background: "#fff", flexShrink: 0, overflowY: "auto", overflowX: "hidden", transition: "all 0.3s", opacity: sidebarOpen ? 1 : 0, position: isMobile ? "fixed" : "relative", top: isMobile ? 57 : "auto", left: 0, bottom: 0, zIndex: isMobile ? 50 : "auto" }}>
           {apiStats && (
             <div style={{ marginBottom: 16, padding: 14, background: apiStats.remaining < 500 ? "#fef2f2" : apiStats.remaining < 1500 ? "#fefce8" : "#f0fdf4", borderRadius: 10, border: `1px solid ${apiStats.remaining < 500 ? "#fecaca" : apiStats.remaining < 1500 ? "#fde68a" : "#bbf7d0"}` }}>
