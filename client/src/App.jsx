@@ -216,29 +216,9 @@ export default function App() {
   }, [sidebarOpen]);
   const intervalRef = useRef(null);
   const countdownRef = useRef(null);
-  const audioCtxRef = useRef(null);
 
-  const unlockAudio = useCallback(() => {
-    if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtxRef.current.state === "suspended") audioCtxRef.current.resume();
-    const buf = audioCtxRef.current.createBuffer(1, 1, 22050);
-    const src = audioCtxRef.current.createBufferSource();
-    src.buffer = buf; src.connect(audioCtxRef.current.destination); src.start(0);
-  }, []);
 
-  const playNotification = useCallback(() => {
-    try {
-      const ctx = audioCtxRef.current; if (!ctx) return;
-      if (ctx.state === "suspended") ctx.resume();
-      const o = ctx.createOscillator(); const g = ctx.createGain();
-      o.connect(g); g.connect(ctx.destination);
-      o.frequency.setValueAtTime(880, ctx.currentTime);
-      o.frequency.setValueAtTime(1320, ctx.currentTime + 0.15);
-      g.gain.setValueAtTime(0.3, ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
-      o.start(); o.stop(ctx.currentTime + 0.4);
-    } catch (e) {}
-  }, []);
+
 
   // Client-side keyword filter: listing title must contain ANY selected keyword
   const matchesKeywords = useCallback((title) => {
@@ -277,7 +257,6 @@ export default function App() {
         const freshNew = new Set();
         matched.forEach(l => { if (!prevIds.has(l.id)) freshNew.add(l.id); });
         if (freshNew.size > 0 && scanCount > 0) {
-          playNotification();
           setNewIds(freshNew);
           setTimeout(() => setNewIds(new Set()), 8000);
           if (Notification.permission === "granted") {
@@ -301,18 +280,17 @@ export default function App() {
         return next;
       }); setCountdown(scanInterval);
     } catch (err) { setError(err.message); } finally { setLoading(false); }
-  }, [criteria, listings, scanCount, scanInterval, playNotification, matchesKeywords]);
+  }, [criteria, listings, scanCount, scanInterval, matchesKeywords]);
 
   const toggleScanning = useCallback(() => {
     if (scanning) { clearInterval(intervalRef.current); clearInterval(countdownRef.current); setScanning(false); setCountdown(null); }
     else {
-      unlockAudio();
       setScanning(true); runScan();
       intervalRef.current = setInterval(runScan, scanInterval * 1000);
       countdownRef.current = setInterval(() => setCountdown(c => c > 0 ? c - 1 : scanInterval), 1000);
       if (Notification.permission === "default") Notification.requestPermission();
     }
-  }, [scanning, scanInterval, runScan, unlockAudio]);
+  }, [scanning, scanInterval, runScan]);
 
   useEffect(() => () => { clearInterval(intervalRef.current); clearInterval(countdownRef.current); }, []);
   useEffect(() => { if (scanning) { clearInterval(intervalRef.current); intervalRef.current = setInterval(runScan, scanInterval * 1000); setCountdown(scanInterval); } }, [scanInterval]);
