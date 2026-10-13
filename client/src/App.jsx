@@ -21,21 +21,23 @@ const ALL_PRESETS = PRESET_CATEGORIES.flatMap(c => c.keywords);
 
 const DEFAULT_PRICE_RULES = [
   { type: "DDR4", size: "4GB", speed: "All", rank: "All", maxPrice: 7 },
-  { type: "DDR4", size: "8GB", speed: "2133", rank: "All", maxPrice: 14 },
-  { type: "DDR4", size: "8GB", speed: "2400", rank: "All", maxPrice: 17 },
-  { type: "DDR4", size: "8GB", speed: "2666", rank: "All", maxPrice: 21 },
-  { type: "DDR4", size: "8GB", speed: "3200", rank: "1RX16", maxPrice: 18 },
-  { type: "DDR4", size: "8GB", speed: "3200", rank: "1RX8", maxPrice: 21 },
-  { type: "DDR4", size: "16GB", speed: "2133", rank: "All", maxPrice: 30 },
-  { type: "DDR4", size: "16GB", speed: "2400", rank: "All", maxPrice: 32 },
-  { type: "DDR4", size: "16GB", speed: "2666", rank: "All", maxPrice: 38 },
-  { type: "DDR4", size: "16GB", speed: "3200", rank: "2RX8", maxPrice: 38 },
-  { type: "DDR4", size: "16GB", speed: "3200", rank: "1RX8", maxPrice: 40 },
+  { type: "DDR4", size: "8GB", speed: "2133", rank: "All", maxPrice: 8 },
+  { type: "DDR4", size: "8GB", speed: "2400", rank: "All", maxPrice: 26 },
+  { type: "DDR4", size: "8GB", speed: "2666", rank: "All", maxPrice: 27 },
+  { type: "DDR4", size: "8GB", speed: "3200", rank: "1RX16", maxPrice: 22 },
+  { type: "DDR4", size: "8GB", speed: "3200", rank: "1RX8", maxPrice: 25 },
+  { type: "DDR4", size: "8GB", speed: "3200", rank: "All", maxPrice: 28 },
+  { type: "DDR4", size: "16GB", speed: "2133", rank: "All", maxPrice: 36 },
+  { type: "DDR4", size: "16GB", speed: "2400", rank: "All", maxPrice: 50 },
+  { type: "DDR4", size: "16GB", speed: "2666", rank: "All", maxPrice: 55 },
+  { type: "DDR4", size: "16GB", speed: "3200", rank: "2RX8", maxPrice: 55 },
+  { type: "DDR4", size: "16GB", speed: "3200", rank: "1RX8", maxPrice: 57 },
+  { type: "DDR4", size: "16GB", speed: "3200", rank: "All", maxPrice: 60 },
   { type: "DDR4", size: "32GB", speed: "2666", rank: "All", maxPrice: 110 },
   { type: "DDR4", size: "32GB", speed: "3200", rank: "All", maxPrice: 120 },
-  { type: "DDR5", size: "8GB", speed: "All", rank: "All", maxPrice: 45 },
-  { type: "DDR5", size: "16GB", speed: "All", rank: "All", maxPrice: 120 },
-  { type: "DDR5", size: "32GB", speed: "All", rank: "All", maxPrice: 220 },
+  { type: "DDR5", size: "8GB", speed: "All", rank: "All", maxPrice: 50 },
+  { type: "DDR5", size: "16GB", speed: "All", rank: "All", maxPrice: 130 },
+  { type: "DDR5", size: "32GB", speed: "All", rank: "All", maxPrice: 250 },
 ];
 
 const EXCLUDED_BRANDS = ["GSKILL", "G.SKILL", "TIMETEC", "CORSAIR", "ELPIDA"];
@@ -44,30 +46,34 @@ const DEFAULT_CRITERIA = { keywords: [], minPrice: "", maxPrice: "", conditions:
 
 function detectQuantityAndSize(title) {
   const t = title.toUpperCase();
+  const excludeQty = [4,8,16,32,64,128,2133,2400,2666,3200,4800,5600,6000];
   const nxm = t.match(/(\d+)\s*[Xx]\s*(\d+)\s*GB/);
   if (nxm) {
     const qty = parseInt(nxm[1]);
     const perStick = parseInt(nxm[2]);
-    if (qty >= 1 && qty <= 100 && perStick > 0) return { qty, perStickGB: perStick };
+    if (qty >= 1 && qty <= 100 && perStick > 0 && !excludeQty.includes(qty)) return { qty, perStickGB: perStick };
   }
   const lotPatterns = [
     /\bLOT\s*(?:OF\s*)?(\d+)/i, /\bKIT\s*(?:OF\s*)?(\d+)/i, /\bSET\s*(?:OF\s*)?(\d+)/i,
     /\bBUNDLE\s*(?:OF\s*)?(\d+)/i,
-    /\((\d+)\s*(?:PACK|PCS?|PIECES?|STICKS?|MODULES?|DIMMS?|COUNT|CT)\)/i,
-    /\b(\d+)\s*(?:PACK|PCS?|PIECES?|STICKS?|MODULES?|DIMMS?|COUNT|CT)\b/i,
+    /\((\d+)\s*(?:PACK|PCS?|PIECES?|STICKS?|MODULES?|DIMMS?)\)/i,
+    /\b(\d+)\s*(?:PACK|PCS?|PIECES?|STICKS?|MODULES?|DIMMS?)\b/i,
     /\bQTY\s*[:.]?\s*(\d+)/i, /\bQUANTITY\s*[:.]?\s*(\d+)/i,
-    /\b(\d+)\s*(?:LOT|LOTS)\b/i,
   ];
   for (const p of lotPatterns) {
     const m = t.match(p);
-    if (m) {
-      const n = parseInt(m[1]);
-      if (n >= 2 && n <= 200 && ![4, 8, 16, 32, 64, 128, 2133, 2400, 2666, 3200, 4800, 5600, 6000].includes(n)) {
-        return { qty: n, perStickGB: null };
-      }
-    }
+    if (m) { const n = parseInt(m[1]); if (n >= 1 && n <= 100 && !excludeQty.includes(n)) return { qty: n, perStickGB: null }; }
   }
   return { qty: 1, perStickGB: null };
+}
+
+function detectRank(title) {
+  const t = title.toUpperCase();
+  if (/\b1RX16\b/.test(t)) return "1RX16";
+  if (/\b1RX8\b/.test(t)) return "1RX8";
+  if (/\b2RX8\b/.test(t)) return "2RX8";
+  if (/\b2RX16\b/.test(t)) return "2RX16";
+  return null;
 }
 
 function matchPriceRule(listing, rules) {
@@ -75,18 +81,15 @@ function matchPriceRule(listing, rules) {
   if (!title || totalPrice === null || totalPrice === undefined) return null;
   const t = title.toUpperCase();
   const { qty, perStickGB } = detectQuantityAndSize(title);
+  const detectedRank = detectRank(title);
   let bestMatch = null;
   let bestSpec = -1;
-
-  // Detect rank from title
-  const detectedRank = t.includes("1RX16") ? "1RX16" : t.includes("2RX8") ? "2RX8" : t.includes("1RX8") ? "1RX8" : t.includes("2RX16") ? "2RX16" : null;
 
   for (const rule of rules) {
     const typeOk = t.includes(rule.type) || (rule.type === "DDR4" && t.includes("PC4")) || (rule.type === "DDR5" && t.includes("PC5"));
     if (!typeOk) continue;
 
     const ruleSizeNum = parseInt(rule.size.replace("GB", ""));
-
     let sizeMatch = false;
     if (perStickGB !== null) {
       sizeMatch = (perStickGB === ruleSizeNum);
@@ -99,17 +102,23 @@ function matchPriceRule(listing, rules) {
     if (!speedOk) speedOk = t.includes(rule.speed);
     if (!speedOk) continue;
 
-    // Rank matching: specific rank > "All"
     let rankOk = rule.rank === "All";
     if (!rankOk) rankOk = detectedRank === rule.rank;
     if (!rankOk) continue;
 
-    // Specificity: rank-specific (3) > speed-specific (2) > speed All (1) > base (0)
+    // Specificity: rank-specific (+2), speed-specific (+1)
     const spec = (rule.speed === "All" ? 0 : 1) + (rule.rank === "All" ? 0 : 2);
     if (spec > bestSpec) {
       bestSpec = spec;
       const adj = rule.maxPrice * qty;
-      bestMatch = { ...rule, qty, totalPrice, adjustedMax: adj, underBudget: listing.shippingKnown === false ? false : totalPrice <= adj, savings: adj - totalPrice, perUnit: qty > 1 ? totalPrice / qty : null, shipUnknown: listing.shippingKnown === false };
+      bestMatch = {
+        ...rule, qty, totalPrice, adjustedMax: adj,
+        underBudget: listing.shippingKnown === false ? false : totalPrice <= adj,
+        savings: adj - totalPrice,
+        perUnit: qty > 1 ? totalPrice / qty : null,
+        shipUnknown: listing.shippingKnown === false,
+        detectedRank,
+      };
     }
   }
   return bestMatch;
@@ -178,7 +187,9 @@ function PriceRulesTable({ rules, setRules }) {
             <tbody>{Object.entries(grouped).map(([type, items]) => items.map((r, j) => (
               <tr key={r.idx} style={{ borderTop: j === 0 && type !== "DDR4" ? "2px solid #e5e7eb" : "1px solid #f0f0f0" }}>
                 {j === 0 && <td style={{ ...tdS, fontWeight: 700, color: type === "DDR5" ? "#7c3aed" : "#1e40af" }} rowSpan={items.length}>{type}</td>}
-                <td style={tdS}>{r.size}</td><td style={{ ...tdS, color: r.speed === "All" ? "#999" : "#555" }}>{r.speed === "All" ? "Any" : r.speed}</td><td style={{ ...tdS, color: r.rank === "All" ? "#999" : "#555" }}>{r.rank === "All" ? "Any" : r.rank}</td>
+                <td style={tdS}>{r.size}</td>
+                <td style={{ ...tdS, color: r.speed === "All" ? "#999" : "#555" }}>{r.speed === "All" ? "Any" : r.speed}</td>
+                <td style={{ ...tdS, color: r.rank === "All" ? "#999" : "#555" }}>{r.rank === "All" ? "Any" : r.rank}</td>
                 <td style={{ ...tdS, textAlign: "right" }}>{editIdx === r.idx ? <input type="number" value={editVal} autoFocus onChange={e => setEditVal(e.target.value)} onBlur={() => { const v = parseFloat(editVal); if (!isNaN(v) && v > 0) { const nr = [...rules]; nr[r.idx] = { ...nr[r.idx], maxPrice: v }; setRules(nr); } setEditIdx(null); }} onKeyDown={e => { if (e.key === "Enter") e.target.blur(); }} style={{ width: 50, border: "1px solid #16a34a", borderRadius: 4, padding: "2px 4px", fontSize: 11, textAlign: "right", fontFamily: "inherit", outline: "none" }} /> : <span onClick={() => { setEditIdx(r.idx); setEditVal(String(r.maxPrice)); }} style={{ cursor: "pointer", color: "#16a34a", fontWeight: 700, borderBottom: "1px dashed #16a34a44" }}>${r.maxPrice}</span>}</td>
               </tr>)))}</tbody>
           </table>
@@ -197,7 +208,7 @@ export default function App() {
   const [listings, setListings] = useState([]);
   const [scanning, setScanning] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [scanInterval, setScanInterval] = useState(10);
+  const [scanInterval, setScanInterval] = useState(6);
   const [lastScan, setLastScan] = useState(null);
   const [error, setError] = useState(null);
   const [scanCount, setScanCount] = useState(0);
@@ -209,18 +220,20 @@ export default function App() {
   const [apiStats, setApiStats] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 768);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
-  useEffect(() => {
-    const onResize = () => { const m = window.innerWidth <= 768; setIsMobile(m); if (!m && !sidebarOpen) setSidebarOpen(true); };
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, [sidebarOpen]);
   const intervalRef = useRef(null);
   const countdownRef = useRef(null);
 
+  // Responsive sidebar
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth <= 768;
+      setIsMobile(mobile);
+      if (!mobile) setSidebarOpen(true);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
-
-
-  // Client-side keyword filter: listing title must contain ANY selected keyword
   const matchesKeywords = useCallback((title) => {
     if (!criteria.keywords.length) return true;
     const t = title.toUpperCase();
@@ -230,7 +243,6 @@ export default function App() {
   const runScan = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      // Always search broadly — keywords filter client-side
       const res = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -251,7 +263,6 @@ export default function App() {
       if (data.apiStats) setApiStats(data.apiStats);
 
       if (data.listings?.length > 0) {
-        // Filter by keywords client-side (ANY match)
         const matched = data.listings.filter(l => matchesKeywords(l.title));
         const prevIds = new Set(listings.map(l => l.id));
         const freshNew = new Set();
@@ -268,14 +279,12 @@ export default function App() {
       } else { setListings([]); }
       setLastScan(new Date()); setScanCount(c => {
         const next = c + 1;
-        // Update from real eBay rate limit every 10 scans
         if (next % 10 === 0) {
           fetch("/api/rate-limit").then(r => r.json()).then(d => {
-            if (d.ebay) setApiStats({ callsToday: d.ebay.count, limit: d.ebay.limit, remaining: d.ebay.remaining });
+            if (d.apiStats) setApiStats(d.apiStats);
           }).catch(() => {});
         } else if (data.apiStats) {
-          // Use local server count between eBay refreshes
-          setApiStats(prev => prev?.limit > 5000 ? prev : { callsToday: data.apiStats.callsToday, limit: data.apiStats.limit, remaining: data.apiStats.remaining });
+          setApiStats(data.apiStats);
         }
         return next;
       }); setCountdown(scanInterval);
@@ -295,9 +304,8 @@ export default function App() {
   useEffect(() => () => { clearInterval(intervalRef.current); clearInterval(countdownRef.current); }, []);
   useEffect(() => { if (scanning) { clearInterval(intervalRef.current); intervalRef.current = setInterval(runScan, scanInterval * 1000); setCountdown(scanInterval); } }, [scanInterval]);
   useEffect(() => {
-    fetch("/api/rate-limit").then(r => r.json()).then(d => {
-      if (d.ebay) setApiStats({ callsToday: d.ebay.count, limit: d.ebay.limit, remaining: d.ebay.remaining });
-      else if (d.local) setApiStats({ callsToday: d.local.callsToday, limit: d.local.limit, remaining: d.local.remaining });
+    fetch("/api/health").then(r => r.json()).then(d => {
+      if (d.apiStats) setApiStats(d.apiStats);
     }).catch(() => {});
   }, []);
 
@@ -305,7 +313,13 @@ export default function App() {
   const toggleCondition = (c) => setCriteria(prev => ({ ...prev, conditions: prev.conditions.includes(c) ? prev.conditions.filter(x => x !== c) : [...prev.conditions, c] }));
 
   const enriched = listings.map(l => ({ ...l, rule: matchPriceRule(l, priceRules) }));
-  const filtered = enriched.filter(l => { if (filterMode === "picks") return l.rule?.underBudget || (l.rule?.shipUnknown && l.rule.savings > 0); if (filterMode === "deals") return l.rule?.underBudget; if (filterMode === "maybe") return l.rule?.shipUnknown && l.rule.savings > 0; if (filterMode === "over") return l.rule && !l.rule.underBudget && !(l.rule.shipUnknown && l.rule.savings > 0); return true; });
+  const filtered = enriched.filter(l => {
+    if (filterMode === "deals") return l.rule?.underBudget;
+    if (filterMode === "maybe") return l.rule?.shipUnknown && l.rule.savings > 0;
+    if (filterMode === "picks") return l.rule?.underBudget || (l.rule?.shipUnknown && l.rule.savings > 0);
+    if (filterMode === "over") return l.rule && !l.rule.underBudget && !(l.rule.shipUnknown && l.rule.savings > 0);
+    return true;
+  });
   const dealCount = enriched.filter(l => l.rule?.underBudget).length;
   const maybeCount = enriched.filter(l => l.rule?.shipUnknown && l.rule.savings > 0).length;
   const picksCount = dealCount + maybeCount;
@@ -321,11 +335,17 @@ export default function App() {
         * { box-sizing: border-box; }
         input:focus, select:focus { outline: none; border-color: #16a34a !important; box-shadow: 0 0 0 3px #16a34a1a; }
         ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-thumb { background: #ddd; border-radius: 3px; }
+        @media (max-width: 768px) {
+          .sidebar-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 40; }
+        }
       `}</style>
 
       {/* Header */}
       <div style={{ borderBottom: "1px solid #e5e7eb", padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="2"><path d="M3 12h18M3 6h18M3 18h18" /></svg>
+          </button>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ width: 28, height: 28, borderRadius: 8, background: "#16a34a", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" /></svg></div>
             <span style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 18, color: "#111" }}>eBay<span style={{ color: "#16a34a" }}>Snipe</span></span>
@@ -340,9 +360,13 @@ export default function App() {
       </div>
 
       <div style={{ display: "flex", minHeight: "calc(100vh - 57px)", position: "relative" }}>
-        <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ position: "fixed", bottom: 20, left: sidebarOpen && !isMobile ? 370 : 10, zIndex: 100, background: sidebarOpen ? "#dc2626" : "#16a34a", color: "#fff", border: "none", width: 44, height: 44, borderRadius: 22, cursor: "pointer", boxShadow: "0 2px 12px rgba(0,0,0,0.25)", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", transition: "left 0.3s, background 0.3s" }}>{sidebarOpen ? "✕" : "☰"}</button>
-        {sidebarOpen && isMobile && <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 49 }} />}
-        <div style={{ width: sidebarOpen ? 360 : 0, minWidth: sidebarOpen ? 360 : 0, maxWidth: sidebarOpen ? "90vw" : 0, borderRight: sidebarOpen ? "1px solid #e5e7eb" : "none", padding: sidebarOpen ? 20 : 0, background: "#fff", flexShrink: 0, overflowY: "auto", overflowX: "hidden", transition: "all 0.3s", opacity: sidebarOpen ? 1 : 0, position: isMobile ? "fixed" : "relative", top: isMobile ? 57 : "auto", left: 0, bottom: 0, zIndex: isMobile ? 50 : "auto" }}>
+        {isMobile && sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+
+        {/* Sidebar */}
+        <div style={{
+          width: 360, borderRight: "1px solid #e5e7eb", padding: 20, background: "#fff", flexShrink: 0, overflowY: "auto",
+          ...(isMobile ? { position: "fixed", top: 57, left: sidebarOpen ? 0 : -370, bottom: 0, zIndex: 50, transition: "left 0.3s ease", boxShadow: sidebarOpen ? "4px 0 20px rgba(0,0,0,0.1)" : "none" } : { display: sidebarOpen ? "block" : "none" }),
+        }}>
           {apiStats && (
             <div style={{ marginBottom: 16, padding: 14, background: apiStats.remaining < 500 ? "#fef2f2" : apiStats.remaining < 1500 ? "#fefce8" : "#f0fdf4", borderRadius: 10, border: `1px solid ${apiStats.remaining < 500 ? "#fecaca" : apiStats.remaining < 1500 ? "#fde68a" : "#bbf7d0"}` }}>
               <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8, fontWeight: 600 }}>eBay API Usage</div>
@@ -412,34 +436,40 @@ export default function App() {
             <div style={{ marginTop: 20, padding: 14, background: "#f9fafb", borderRadius: 10 }}>
               <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10, fontWeight: 600 }}>Session</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                {[{ l: "Scans", v: scanCount }, { l: "Results", v: listings.length }, { l: "Picks", v: picksCount, c: "#7c3aed" }, { l: "Deals", v: dealCount, c: "#16a34a" }, { l: "Maybe", v: maybeCount, c: "#3b82f6" }, { l: "Over", v: overCount, c: "#dc2626" }].map(s => <div key={s.l}><div style={{ fontSize: 9, color: "#bbb", textTransform: "uppercase", letterSpacing: 1 }}>{s.l}</div><div style={{ fontSize: 14, fontWeight: 600, color: s.c || "#333", fontFamily: "'DM Sans', sans-serif" }}>{s.v}</div></div>)}
+                {[{ l: "Scans", v: scanCount }, { l: "Results", v: listings.length }, { l: "Deals", v: dealCount, c: "#16a34a" }, { l: "Maybe", v: maybeCount, c: "#3b82f6" }, { l: "Picks", v: picksCount, c: "#7c3aed" }, { l: "Over", v: overCount, c: "#dc2626" }].map(s => <div key={s.l}><div style={{ fontSize: 9, color: "#bbb", textTransform: "uppercase", letterSpacing: 1 }}>{s.l}</div><div style={{ fontSize: 14, fontWeight: 600, color: s.c || "#333", fontFamily: "'DM Sans', sans-serif" }}>{s.v}</div></div>)}
               </div>
             </div>
           )}
         </div>
 
         {/* Main */}
-        <div style={{ flex: 1, padding: sidebarOpen ? 24 : 16, overflowY: "auto", background: "#fafafa" }}>
+        <div style={{ flex: 1, padding: isMobile ? 12 : 24, overflowY: "auto", background: "#fafafa" }}>
           {tab === "monitor" ? (<>
             {error && <div style={{ padding: "12px 16px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, color: "#dc2626", fontSize: 12, marginBottom: 16, fontFamily: "'DM Sans', sans-serif" }}>{error}</div>}
             {loading && !listings.length && <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 300, gap: 16 }}><div style={{ width: 36, height: 36, border: "3px solid #e5e7eb", borderTop: "3px solid #16a34a", borderRadius: "50%", animation: "pulse 1s linear infinite" }} /><div style={{ fontSize: 12, color: "#aaa", fontFamily: "'DM Sans', sans-serif" }}>Searching eBay near {ZIP_CODE}...</div></div>}
             {!loading && !listings.length && !error && <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 400, gap: 16 }}><div style={{ width: 64, height: 64, borderRadius: 20, background: "#f3f4f6", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ccc" strokeWidth="1.5"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" /></svg></div><div style={{ fontSize: 14, color: "#999", textAlign: "center", lineHeight: 1.7, fontFamily: "'DM Sans', sans-serif" }}>Hit <span style={{ color: "#16a34a", fontWeight: 600 }}>Start Monitor</span> to begin.</div></div>}
 
             {listings.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <div style={{ display: "flex", gap: 4, background: "#f3f4f6", borderRadius: 8, padding: 3 }}>
-                  {[{ k: "all", l: `All (${enriched.length})` }, { k: "picks", l: `Picks (${picksCount})`, c: "#7c3aed" }, { k: "deals", l: `Deals (${dealCount})`, c: "#16a34a" }, { k: "maybe", l: `Maybe (${maybeCount})`, c: "#3b82f6" }, { k: "over", l: `Over (${overCount})`, c: "#dc2626" }].map(f => <button key={f.k} onClick={() => setFilterMode(f.k)} style={{ background: filterMode === f.k ? "#fff" : "transparent", border: "none", boxShadow: filterMode === f.k ? "0 1px 3px rgba(0,0,0,0.08)" : "none", color: filterMode === f.k ? (f.c || "#111") : "#999", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600 }}>{f.l}</button>)}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+                <div style={{ display: "flex", gap: 4, background: "#f3f4f6", borderRadius: 8, padding: 3, flexWrap: "wrap" }}>
+                  {[
+                    { k: "all", l: `All (${enriched.length})` },
+                    { k: "picks", l: `Picks (${picksCount})`, c: "#7c3aed" },
+                    { k: "deals", l: `Deals (${dealCount})`, c: "#16a34a" },
+                    { k: "maybe", l: `Maybe (${maybeCount})`, c: "#3b82f6" },
+                    { k: "over", l: `Over (${overCount})`, c: "#dc2626" },
+                  ].map(f => <button key={f.k} onClick={() => setFilterMode(f.k)} style={{ background: filterMode === f.k ? "#fff" : "transparent", border: "none", boxShadow: filterMode === f.k ? "0 1px 3px rgba(0,0,0,0.08)" : "none", color: filterMode === f.k ? (f.c || "#111") : "#999", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600 }}>{f.l}</button>)}
                 </div>
                 {loading && <span style={{ fontSize: 11, color: "#16a34a", animation: "pulse 1s infinite" }}>● Updating...</span>}
               </div>
 
               {filtered.map((li, i) => {
                 const r = li.rule; const isDeal = r?.underBudget; const isMaybe = r?.shipUnknown && r.savings > 0; const isOver = r && !r.underBudget && !isMaybe;
-                return (<div key={li.id} style={{ background: isDeal ? "#f0fdf4" : isMaybe ? "#eff6ff" : isOver ? "#fefce8" : "#fff", border: `1px solid ${isDeal ? "#86efac" : isMaybe ? "#bfdbfe" : isOver ? "#fde68a" : "#f3f4f6"}`, borderLeft: isDeal ? "4px solid #16a34a" : isMaybe ? "4px solid #3b82f6" : isOver ? "4px solid #eab308" : "4px solid transparent", borderRadius: 12, padding: 16, animation: `slideIn 0.3s ease ${i * 0.04}s both${isDeal ? ", dealPulse 2s ease 1" : ""}`, boxShadow: isDeal ? "0 2px 12px #16a34a11" : isMaybe ? "0 2px 12px #3b82f611" : "0 1px 3px rgba(0,0,0,0.03)" }}>
-                  <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
-                    {li.image && <img src={li.image} alt="" style={{ width: 72, height: 72, borderRadius: 8, objectFit: "cover", background: "#f3f4f6", flexShrink: 0 }} />}
+                return (<div key={li.id} style={{ background: isDeal ? "#f0fdf4" : isMaybe ? "#eff6ff" : isOver ? "#fefce8" : "#fff", border: `1px solid ${isDeal ? "#86efac" : isMaybe ? "#bfdbfe" : isOver ? "#fde68a" : "#f3f4f6"}`, borderLeft: isDeal ? "4px solid #16a34a" : isMaybe ? "4px solid #3b82f6" : isOver ? "4px solid #eab308" : "4px solid transparent", borderRadius: 12, padding: isMobile ? 12 : 16, animation: `slideIn 0.3s ease ${i * 0.04}s both${isDeal ? ", dealPulse 2s ease 1" : ""}`, boxShadow: isDeal ? "0 2px 12px #16a34a11" : isMaybe ? "0 2px 12px #3b82f611" : "0 1px 3px rgba(0,0,0,0.03)" }}>
+                  <div style={{ display: "flex", gap: isMobile ? 10 : 14, alignItems: "flex-start", flexWrap: isMobile ? "wrap" : "nowrap" }}>
+                    {li.image && <img src={li.image} alt="" style={{ width: isMobile ? 56 : 72, height: isMobile ? 56 : 72, borderRadius: 8, objectFit: "cover", background: "#f3f4f6", flexShrink: 0 }} />}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 500, color: "#222", lineHeight: 1.5, marginBottom: 8 }}>
+                      <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: isMobile ? 12 : 14, fontWeight: 500, color: "#222", lineHeight: 1.5, marginBottom: 8 }}>
                         {isDeal && <span style={{ background: "#16a34a", color: "#fff", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20, marginRight: 8, textTransform: "uppercase", letterSpacing: 1, fontFamily: "'IBM Plex Mono', monospace" }}>✓ Deal</span>}
                         {isMaybe && <span style={{ background: "#3b82f6", color: "#fff", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20, marginRight: 8, textTransform: "uppercase", letterSpacing: 1, fontFamily: "'IBM Plex Mono', monospace" }}>? Maybe</span>}
                         {isOver && <span style={{ background: "#fbbf24", color: "#78350f", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20, marginRight: 8, textTransform: "uppercase", fontFamily: "'IBM Plex Mono', monospace" }}>Over</span>}
@@ -449,18 +479,26 @@ export default function App() {
                       </div>
                       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                         <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                          <span style={{ color: isDeal ? "#16a34a" : isMaybe ? "#2563eb" : isOver ? "#b45309" : "#16a34a", fontSize: 20, fontWeight: 700, fontFamily: "'DM Sans', sans-serif" }}>${li.totalPrice.toFixed(2)}</span>
+                          <span style={{ color: isDeal ? "#16a34a" : isMaybe ? "#2563eb" : isOver ? "#b45309" : "#16a34a", fontSize: isMobile ? 16 : 20, fontWeight: 700, fontFamily: "'DM Sans', sans-serif" }}>${li.totalPrice.toFixed(2)}</span>
                           <span style={{ fontSize: 10, color: li.shippingKnown === false ? "#2563eb" : "#999", fontFamily: "'IBM Plex Mono', monospace" }}>
                             {li.shippingKnown === false ? `($${li.itemPrice.toFixed(2)} + ship TBD)` : `($${li.itemPrice.toFixed(2)} + $${li.shipCost.toFixed(2)} ship)`}
                           </span>
                         </div>
-                        {r && <span style={{ fontSize: 10, fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace", color: r.shipUnknown && r.savings > 0 ? "#2563eb" : r.savings >= 0 ? "#16a34a" : "#dc2626", background: r.shipUnknown && r.savings > 0 ? "#eff6ff" : r.savings >= 0 ? "#dcfce7" : "#fef2f2", padding: "3px 8px", borderRadius: 20 }}>{r.savings >= 0 ? `$${r.savings.toFixed(0)} under` : `$${Math.abs(r.savings).toFixed(0)} over`}{r.shipUnknown ? " + ship?" : ""}{r.qty > 1 ? ` (${r.qty}× ≤$${r.adjustedMax})` : ` (≤$${r.adjustedMax})`}</span>}
+                        {r && <span style={{ fontSize: 10, fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace", color: r.shipUnknown ? "#2563eb" : r.savings >= 0 ? "#16a34a" : "#dc2626", background: r.shipUnknown ? "#eff6ff" : r.savings >= 0 ? "#dcfce7" : "#fef2f2", padding: "3px 8px", borderRadius: 20 }}>
+                          {r.shipUnknown
+                            ? `$${r.savings.toFixed(0)} under + ship?`
+                            : r.savings >= 0
+                              ? `$${r.savings.toFixed(0)} under`
+                              : `$${Math.abs(r.savings).toFixed(0)} over`
+                          }{r.qty > 1 ? ` (${r.qty}× ≤$${r.adjustedMax})` : ` (≤$${r.adjustedMax})`}
+                        </span>}
                         {r?.qty > 1 && <span style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", background: "#f5f3ff", padding: "3px 8px", borderRadius: 20, border: "1px solid #ddd6fe", fontFamily: "'IBM Plex Mono', monospace" }}>{r.qty}× · ${r.perUnit?.toFixed(2)}/ea</span>}
+                        {r?.detectedRank && <span style={{ fontSize: 9, color: "#6b21a8", background: "#faf5ff", padding: "2px 6px", borderRadius: 12, border: "1px solid #e9d5ff", fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{r.detectedRank}</span>}
                         {li.condition && <span style={{ fontSize: 10, color: "#777", background: "#f3f4f6", padding: "3px 8px", borderRadius: 20, fontFamily: "'DM Sans', sans-serif" }}>{li.condition}</span>}
                         {li.seller && <span style={{ fontSize: 10, color: "#999", fontFamily: "'IBM Plex Mono', monospace" }}>@{li.seller}</span>}
                       </div>
                     </div>
-                    {li.url && <a href={li.url} target="_blank" rel="noopener noreferrer" style={{ background: isDeal ? "#16a34a" : isMaybe ? "#3b82f6" : "#555", border: "none", color: "#fff", padding: "10px 20px", borderRadius: 10, textDecoration: "none", fontSize: 12, fontWeight: 600, fontFamily: "'DM Sans', sans-serif", display: "flex", alignItems: "center", gap: 6, boxShadow: isDeal ? "0 2px 8px #16a34a33" : isMaybe ? "0 2px 8px #3b82f633" : "0 2px 8px rgba(0,0,0,0.1)", flexShrink: 0 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>BUY</a>}
+                    {li.url && <a href={li.url} target="_blank" rel="noopener noreferrer" style={{ background: isDeal ? "#16a34a" : isMaybe ? "#3b82f6" : "#555", border: "none", color: "#fff", padding: isMobile ? "8px 14px" : "10px 20px", borderRadius: 10, textDecoration: "none", fontSize: 12, fontWeight: 600, fontFamily: "'DM Sans', sans-serif", display: "flex", alignItems: "center", gap: 6, boxShadow: isDeal ? "0 2px 8px #16a34a33" : isMaybe ? "0 2px 8px #3b82f633" : "0 2px 8px rgba(0,0,0,0.1)", flexShrink: 0 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>BUY</a>}
                   </div>
                 </div>);
               })}
